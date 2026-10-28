@@ -5,8 +5,9 @@ The perturbation test simulates another maths library: a child Python process ha
 (sin, cos, tan, exp, log, pow, atan, ... and their complex twins) return its result moved some units in the last place
 (away from or toward 0, or by a count fixed by the arguments' magnitudes, so f(-x) = -f(x) still holds, as in every
 real libm), before the kit is imported, so module constants move too. It writes the gen~ code of every gen block in
-the kit (each technique and circuit module with its functions, declarations, statements and display script) and the
-fixture device's whole build; every byte has to be the same as with the machine's own maths library.
+the kit (each technique and circuit module with its functions, declarations and statements), the LTC1060 / MF10
+section's response script, and the fixture device as a plugin build reads it (its patch, its gen~ code as built, its
+brain and its Live parameter lock); every byte has to be the same as with the machine's own maths library.
 
     python3 tests/test_generated_numbers.py --probe up4    # the probe itself: prints the sha256 of each output
 """
@@ -167,9 +168,7 @@ def every_block_text():
     texts["timbre"] = "\n".join(["\n".join(timbre.functions().values()), timbre.declarations(),
                                  timbre.point_statements("pt", "sine"), timbre.output_statements("pt"),
                                  timbre.remember_statements("pt"), repr(timbre.output_peak_volts)])
-    texts["scripts"] = "\n".join([ltc1060_mf10_section.response_script_code(), transistor.response_script_code(),
-                                  phaser.response_script_code(), sidechain_style_pump.response_script_code(),
-                                  zero_delay_ladder_filter.response_script_code()])
+    texts["scripts"] = ltc1060_mf10_section.response_script_code()
     return texts
 
 
@@ -178,28 +177,24 @@ def probe(mode):
     held to the rule (check_generated_text)."""
     if mode != "none":
         install_perturbed_libm(mode)
-    import contextlib
-    import io
-    import shutil
-    import tempfile
     sys.path[:0] = [KIT_ROOT, TESTS]
-    from twosl_dsp.generated_numbers import check_generated_text
+    from twosl_dsp.generated_numbers import check_generated_text, literals_held_by_the_lock
+    from twosl_dsp.live_parameter_identity import device_identity, lock_text
+    from twosl_dsp.preset_book import PresetBook
     import fixture_device
     digests = {}
     for name, text in every_block_text().items():
         check_generated_text(text, name)
         digests[name] = hashlib.sha256(text.encode()).hexdigest()
-    root = tempfile.mkdtemp(prefix="kit-generated-numbers-")
-    try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            fixture_device.build_fixture_device(root)
-        for directory, _, names in os.walk(root):
-            for name in names:
-                path = os.path.join(directory, name)
-                with open(path, "rb") as handle:
-                    digests[os.path.relpath(path, root)] = hashlib.sha256(handle.read()).hexdigest()
-    finally:
-        shutil.rmtree(root)
+    patch = fixture_device.fixture_patch(PresetBook(fixture_device.FIXTURE_PRESET_BOOK, "the fixture's book"))
+    fixture_texts = {"fixture patch": json.dumps(patch.patch(), indent=1, sort_keys=True),
+                     "fixture brain": patch.fixture_brain,
+                     "fixture lock": lock_text(device_identity(patch.patch(), patch.device_type))}
+    fixture_texts.update({f"fixture gen~ {box_id}": patch.gen_code_as_built(box_id) for box_id in patch.gen_code_by_box})
+    held = literals_held_by_the_lock(fixture_texts["fixture lock"])
+    for name, text in fixture_texts.items():
+        check_generated_text(text, name, held)
+        digests[name] = hashlib.sha256(text.encode()).hexdigest()
     return digests
 
 
@@ -254,7 +249,7 @@ class GeneratedNumberTests(unittest.TestCase):
         with self.assertRaises(BuildError):
             check_generated_text('"parameter_mmin": 0.016666666666666666', "patch")
 
-    def test_every_block_and_the_fixture_build_are_the_same_whatever_the_maths_library_rounds(self):
+    def test_every_block_and_the_fixture_are_the_same_whatever_the_maths_library_rounds(self):
         own = probe_in_a_child("none")
         self.assertGreater(len(own), 35)
         for mode in ("up1", "down1", "up4", "down4", "random4", "random16"):

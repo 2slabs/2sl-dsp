@@ -30,7 +30,7 @@ The digit count, 10:
 
 The check: `check_generated_text` fails the build on a decimal literal with more than SIGNIFICANT_DIGITS significant
 digits that generated_number didn't write from a Fraction (a computed float that skipped the rule, or one typed by
-hand: the same rule holds for both). device_build checks every file it writes, the plugin layer every generated file.
+hand: the same rule holds for both). A plugin's build checks every file it generates (2sl-plugin twosl_plugin).
 The one exception: a number the Live parameter lock holds (a parameter's range or initial value,
 src/live-parameters.lock.json), which can't change without changing what Live knows the parameter by, and which the
 lock already holds to the byte on every machine (a machine whose maths library made it differently fails the lock

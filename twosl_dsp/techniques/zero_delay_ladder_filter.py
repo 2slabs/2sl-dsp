@@ -95,24 +95,12 @@ ${p}_out = ${p}_y4;""",
 
 
 def small_signal_magnitude(frequency_hz, cutoff_hz, resonance, sample_rate, linear=False):
-    """|H| of the ladder for small signals (tanh slope 1; the linear form's at any level), as its displays draw it:
+    """|H| of the ladder for small signals (tanh slope 1; the linear form's at any level):
     the analog ladder 1 / ((1 + s)^4 + k) at s = j tan(pi f / sr) / tan(pi fc / sr), k the form's at `resonance`.
-    Python's copy of templates/zero-delay-ladder-response.template.js, which the tests hold equal to it and to the
-    technique."""
+    The tests hold it to the technique."""
     cutoff_hz = min(max(cutoff_hz, LOWEST_CUTOFF_HZ), HIGHEST_CUTOFF_OF_SAMPLE_RATE * sample_rate)
     k = min(max(resonance, 0.0), 1.0) * feedback_at_full_resonance(linear)
     s = 1j * math.tan(math.pi * min(frequency_hz, 0.4999 * sample_rate) / sample_rate) / math.tan(
         math.pi * cutoff_hz / sample_rate)
     return abs(1 / ((1 + s) ** 4 + k))
 
-
-def response_script_code():
-    """The ES5 for a device's displays, both forms (templates/zero-delay-ladder-response.template.js), with the
-    technique's constants filled in: `ladderFeedbackGain(resonance, linear)` (k) and `ladderResponse(frequencyHz,
-    cutoffHz, feedbackGain, sampleRate)` (|H| at that k)."""
-    from twosl_dsp.generated_scripts import fill_template, kit_template_text
-    return fill_template(kit_template_text("zero-delay-ladder-response.template.js"), {
-        "LADDER_FEEDBACK_AT_FULL_RESONANCE": repr(FEEDBACK_AT_FULL_RESONANCE),
-        "LADDER_LINEAR_FEEDBACK_AT_FULL_RESONANCE": repr(LINEAR_FEEDBACK_AT_FULL_RESONANCE),
-        "LADDER_HIGHEST_CUTOFF_OF_SAMPLE_RATE": repr(HIGHEST_CUTOFF_OF_SAMPLE_RATE),
-        "LADDER_LOWEST_CUTOFF_HZ": repr(LOWEST_CUTOFF_HZ)}, "zero-delay-ladder-response.template.js")

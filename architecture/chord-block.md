@@ -13,7 +13,7 @@ i think is shared code and should be treated as such". It will grow; it grows he
   2sl gate (4 oscillators) plays m11 as 1 b3 b7 11.
 - **In key**: with Live 12's Scale Mode (the Live Set's `root_note` and `scale_intervals`, observed by the block),
   the key snaps down into the scale and the shape's scale steps stack on it. A scale under 5 notes can't: the fixed
-  shapes play, the chord display says so in orange, and the Max window logs each change. The notice shows only while
+  shapes play, the brain sends the display a notice, and logs each change. The notice shows only while
   a shape is chosen (not one note or held notes).
 - **Held notes**: the key plays itself. The block tracks the keys held (oldest first, with velocities; a key held
   twice is released by its last note-off) and says when a note-on starts a fresh chord (nothing was held). What the
@@ -25,10 +25,9 @@ i think is shared code and should be treated as such". It will grow; it grows he
 - **Drift**: `chordDrifted(pitches, drift)`: with chance `drift` (a draw of the seeded random), another voicing
   (invert, drop the top, spread the middle, add the octave, chosen by another draw). So the block needs the
   device's `SeededRandom`.
-- **The display** (`templates/chord-display.template.js`): the kit's heading (`viewHeading`: the device's label,
-  the notes as its reading) or the In key notice, the name large, two octaves of keys lit.
+- **The display**: the brain sends `chord <name> <pitches...>` and the In key notice out of the display outlet; each
+  plugin's window draws them (2sl stab's plugin/ui).
 - **The device's part**: make a view for the display and the `ChordBlock`; place `chord_menu` and `in_key_toggle`
   (named as Live already knows them); `/*CHORD_BLOCK*/` in the brain (after the seeded random's code), every
-  control message through `chordBlockMessage`; `/*CHORD_DISPLAY*/` in the views, `chordDisplayMessage` first in
-  `deviceMessage`, the painter `chordDisplayView(w, h, label)`. Its Info text for the two controls and the view is
+  control message through `chordBlockMessage`. Its Info text for the two controls and the view is
   the device's (what they do differs: 2sl gate's apply in Chords only).

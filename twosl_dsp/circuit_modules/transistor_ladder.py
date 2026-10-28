@@ -37,8 +37,7 @@ set as the service manual's calibration sets it, so the loop's gain is 4 (regene
 the input at low frequencies for k = 0, patent col. 2 l. 6-9; then the output's coupling capacitor's high-pass),
 `<name>_cutoff_hz` (fc, as clamped), `<name>_feedback_gain` (k; both as the controls are now, before the 2x
 core's delay), `<name>_ladder_current_amps` (If).
-`reset_statements()` empties the ladder. `response_script_code()`: the instance's small-signal response and its
-Emphasis law in ES5, for a display (templates/transistor-ladder-response.template.js).
+`reset_statements()` empties the ladder.
 
 The build character (`TransistorLadderCharacter`): VT, C (the service manual's 0.068 uF), each stage's capacitor as a
 ratio (mismatch), the input pair's offset (even harmonics), the mixer's volts-at-the-bases per input volt (an input:
@@ -345,23 +344,3 @@ ${p}_ladder_volts = ${p}_x4_out * ${volts_out_per_x4};
         return self.substituted("${p}_s1 = 0;\n${p}_s2 = 0;\n${p}_s3 = 0;\n${p}_s4 = 0;\n${p}_x1 = 0;\n${p}_x2 = 0;\n"
                                 "${p}_x3 = 0;\n${p}_x4 = 0;\n") + self.output_coupling.reset_statements() + "".join(
             "\n" + block.reset_statements() for block in (self.upsampler, self.downsampler) if block is not None)
-
-    def response_script_code(self):
-        """ES5 for a display: `<name>_feedback_gain(emphasis)` (k at a rotation 0..1, the circuit's law) and
-        `<name>_response(frequencyHz, cutoffHz, emphasis, sampleRate)`, |small_signal_response| of this instance (its
-        stages' capacitors, its oversampling and the halfband pair's response, its clamps), before the output coupling
-        (templates/transistor-ladder-response.template.js)."""
-        from twosl_dsp.generated_scripts import fill_template, kit_template_text
-        character = self.character
-        return fill_template(kit_template_text("transistor-ladder-response.template.js"), {
-            "NAME": self.instance_name,
-            "REGENERATION_NUMERATOR": repr(regeneration_numerator(character)),
-            "LOOP_OHMS": repr(character.regeneration_fixed_ohms + character.regeneration_trim_ohms),
-            "POT_OHMS": repr(character.emphasis_pot_ohms),
-            "TAPER_BASE": repr(emphasis_taper_base(character)),
-            "LOWEST_CUTOFF_HZ": repr(LOWEST_CUTOFF_HZ),
-            "HIGHEST_CUTOFF_OF_SAMPLE_RATE": repr(HIGHEST_CUTOFF_OF_SAMPLE_RATE),
-            "OVERSAMPLING": str(self.oversampling),
-            "STAGE_CAPACITANCE_RATIOS": "[" + ", ".join(repr(float(r)) for r in stage_capacitance_ratios(character)) + "]",
-            "HALFBAND_COEFFICIENTS": "[" + ", ".join(repr(a) for a in halfband_coefficients()) + "]"},
-            "transistor-ladder-response.template.js")

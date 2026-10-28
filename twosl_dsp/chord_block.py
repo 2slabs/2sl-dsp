@@ -1,16 +1,15 @@
-"""ChordBlock: chord memory for a device's brain, its Chord and In key controls, and its display
+"""ChordBlock: chord memory for a device's brain, its Chord and In key controls
 (architecture/chord-block.md).
 
 A key plays a stored chord shape stacked on it (fixed intervals, or Live 12's Scale Mode with In key), or with
 "held notes" just itself; the brain tracks the keys held, names what sounds, varies voicings (Drift, from the kit's
-seeded random), and tells the chord display (templates/chord-block.template.js, chord-display.template.js).
+seeded random), and sends what sounds to the display outlet (templates/chord-block.template.js).
 
     chords = ChordBlock(patch, seeded_random, brain, brain_control_inlet, brain_display_outlet, display_box,
                         most_notes_per_chord, one_note=False)
     chords.chord_menu(name, short, x, y, w, page)         # a live.menu of chords.menu_items
     chords.in_key_toggle(name, short, x, y, w, h, page)   # a live.text
     chords.brain_code()       # fills the device brain's /*CHORD_BLOCK*/ (after both controls)
-    ChordBlock.display_code() # fills the device views' /*CHORD_DISPLAY*/
 
 The device names its two controls (Live knows them by those names: 2sl stab "Chord" / "In Key", 2sl gate "Chord" /
 "In key") and their Info text; the kit owns the shapes and their item names.
@@ -115,7 +114,3 @@ class ChordBlock:
             "INITIAL_CHORD_SHAPE": str(self.patch.initial_values[self.chord_menu_name]),
             "INITIAL_CHORD_IN_KEY": str(self.patch.initial_values[self.in_key_toggle_name])},
             "the kit's chord block template").strip()
-
-    @staticmethod
-    def display_code():
-        return kit_template_text("chord-display.template.js").strip()

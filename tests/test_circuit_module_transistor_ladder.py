@@ -12,7 +12,6 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from twosl_dsp import es5  # noqa: E402
 from twosl_dsp.build_error import BuildError  # noqa: E402
 from twosl_dsp.circuit_modules import transistor_ladder  # noqa: E402
 from twosl_dsp.render_comparison import assert_renders_similar  # noqa: E402
@@ -112,24 +111,6 @@ class EmphasisLawTests(unittest.TestCase):
             program.set_param("emphasis", emphasis)
             self.assertAlmostEqual(program.run(1, [[0.0]])[3][0], feedback_gain_at_emphasis(emphasis, TYPICAL),
                                    places=12, msg=emphasis)
-
-    def test_the_display_script_is_the_module_s_response_and_law(self):
-        mismatched = TransistorLadderCharacter(stage_1_capacitance_ratio=1.1, stage_3_capacitance_ratio=0.93,
-                                                   emphasis_pot_audio_taper_at_half_rotation=0.15)
-        for character in (TYPICAL, mismatched):
-            for oversampling in (1, 2):
-                block = TransistorLadder("shown_vcf", input_volts="in1", control_volts="0", emphasis="0",
-                                             oversampling=oversampling, character=character)
-                script = block.response_script_code()
-                for frequency, cutoff, emphasis, rate in ((100.0, 700.0, 0.3, 48000), (700.0, 700.0, 1.0, 44100),
-                                                          (15000.0, 30000.0, 0.8, 44100), (19000.0, 2000.0, 0.0, 96000)):
-                    drawn = float(es5.evaluate(script + f"\nshown_vcf_response({frequency}, {cutoff}, {emphasis}, {rate})"))
-                    gain = feedback_gain_at_emphasis(emphasis, character)
-                    module = abs(small_signal_response(frequency, cutoff, gain, rate, character=character, oversampling=oversampling))
-                    self.assertAlmostEqual(drawn / module, 1.0, places=9, msg=(oversampling, frequency, cutoff))
-                    self.assertAlmostEqual(float(es5.evaluate(script + f"\nshown_vcf_feedback_gain({emphasis})")), gain,
-                                           places=12)
-
 
 class SmallSignalTests(unittest.TestCase):
     def test_at_one_step_a_sample_it_is_the_prewarped_analog_ladder(self):

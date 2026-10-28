@@ -17,8 +17,8 @@ means the same and loads the same way.
 
 The preset book holds it like a control, by its name, as {field: [one value per row]} in each field's own units (a
 continuous field's number, a choice field's item name): Init gives every field, a preset the fields it changes.
-A preset's held value is a HeldTable; its Stored Only values go into Live preset files, the Preset menu and the
-plugin's presets without the device's help (preset_book.stored_only_values_of_preset).
+A preset's held value is a HeldTable; its Stored Only values go into the plugin's presets
+without the device's help (preset_book.stored_only_values_of_preset).
 
 How it is stored: each continuous field of each row is one Stored Only parameter, "<table> <field> <row>" (row 1..n),
 its value a whole number 0..65535 (DevicePatchBuilder.stored: Live's Int type holds 256 values). A continuous field
@@ -128,8 +128,7 @@ class StoredTable(SavedRecord):
     def __init__(self, patch, name, fields, row_count, brain, brain_inlet, brain_outlet, initial_outside_presets=None):
         """The table `name` of `row_count` rows of `fields` (ContinuousField, ChoiceField), its Init value the preset
         book's; or, given `initial_outside_presets` ({field: [a value per row]}, every field, in its own units), that
-        is its initial value and presets leave the table alone (the Preset menu doesn't set it; a Live preset file
-        can't hold it, so the build fails with Live preset files). Its Stored Only parameters tell `brain` (inlet
+        is its initial value and presets leave the table alone. Its Stored Only parameters tell `brain` (inlet
         `brain_inlet`) their values; the brain writes them back from outlet `brain_outlet` (the route is made by
         stored_tables_brain_code, once the editors are placed)."""
         names = [field.name for field in fields]

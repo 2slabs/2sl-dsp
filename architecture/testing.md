@@ -2,9 +2,9 @@
 
 The user's rule (2026-10-21): "the build should be the same, but the tests aren't the build".
 
-- **The build is compared byte for byte.** Everything a build writes (devices/, dist/, `.adv`, a plugin's generated/,
-  the Live parameter lock) is the same on every machine (overview.md, "Generated numbers") and the tests compare it
-  exactly: `build_comparison`, `generate.py --check`, the lock. Fetched sources are checked by their sha256 (a
+- **The build is compared byte for byte.** Everything a build writes (a plugin's plugin/generated/, the Live
+  parameter lock) is the same on every machine (overview.md, "Generated numbers") and the tests compare it exactly:
+  `generate.py --check`, the lock. Fetched sources are checked by their sha256 (a
   source, not a render). Those stay exact.
 - **A sound is compared as sound.** Two renders (plugin vs device, before vs after a change that should keep the
   sound, -O2 vs -O0, a block reset vs a fresh one, a preset migrated vs as it was) are compared by

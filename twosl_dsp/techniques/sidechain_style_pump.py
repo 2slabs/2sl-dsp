@@ -24,7 +24,7 @@ follows its target through a one-pole of 0.442 ms (about 1 ms to 90 %), so no st
 including a Depth moved by hand.
 
 Outputs: `<name>_gain` (the gain to multiply the signal by) and `<name>_duck` (the shape before depth and the
-glide, 0..1, after the hand-over crossfade), which the tests hold to `pump_duck` below and to the display's script.
+glide, 0..1, after the hand-over crossfade), which the tests hold to `pump_duck` below.
 """
 import math
 
@@ -88,8 +88,8 @@ ${p}_gain = ${p}_gain + (${p}_target_gain - ${p}_gain) * smoothing_coefficient($
 
 
 def pump_duck(phase, attack_ms, division_ms, release_fraction, curve):
-    """The duck (0..1) at `phase` of a division `division_ms` long: Python's copy of the technique's shape and of
-    templates/sidechain-pump-duck.template.js, which the tests hold equal to it and to the rendered technique."""
+    """The duck (0..1) at `phase` of a division `division_ms` long: Python's copy of the technique's shape, which the
+    tests hold to the rendered technique."""
     attack_fraction = min(max(attack_ms / division_ms, LOWEST_ATTACK_FRACTION), HIGHEST_ATTACK_FRACTION)
     release_end = max(release_fraction, attack_fraction + RELEASE_END_MARGIN)
     if phase < attack_fraction:
@@ -97,13 +97,3 @@ def pump_duck(phase, attack_ms, division_ms, release_fraction, curve):
     recovery_left = 1 - min(max((phase - attack_fraction) / (release_end - attack_fraction), 0.0), 1.0)
     return recovery_left ** (1 + curve * CURVE_EXPONENT_PER_CURVE)
 
-
-def response_script_code():
-    """The ES5 `sidechainPumpDuck(phase, attackMs, divisionMs, releaseFraction, curve)` for a device's displays, with
-    the technique's constants filled in (templates/sidechain-pump-duck.template.js)."""
-    from twosl_dsp.generated_scripts import fill_template, kit_template_text
-    return fill_template(kit_template_text("sidechain-pump-duck.template.js"), {
-        "SIDECHAIN_PUMP_LOWEST_ATTACK_FRACTION": repr(LOWEST_ATTACK_FRACTION),
-        "SIDECHAIN_PUMP_HIGHEST_ATTACK_FRACTION": repr(HIGHEST_ATTACK_FRACTION),
-        "SIDECHAIN_PUMP_RELEASE_END_MARGIN": repr(RELEASE_END_MARGIN),
-        "SIDECHAIN_PUMP_CURVE_EXPONENT_PER_CURVE": repr(CURVE_EXPONENT_PER_CURVE)}, "sidechain-pump-duck.template.js")

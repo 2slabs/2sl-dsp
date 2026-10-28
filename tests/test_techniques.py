@@ -11,7 +11,6 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from twosl_dsp import es5  # noqa: E402
 from twosl_dsp.build_error import BuildError  # noqa: E402
 from twosl_dsp.gen_blocks import gen_code_with_blocks  # noqa: E402
 from twosl_dsp.genexpr import GenProgram  # noqa: E402
@@ -43,7 +42,7 @@ from twosl_dsp.techniques.zero_delay_allpass_cascade import (FirstOrderAllpassSt
 from twosl_dsp.techniques.zero_delay_allpass_cascade import \
     small_signal_response as cascade_small_signal_response  # noqa: E402
 from twosl_dsp.techniques.zero_delay_ladder_filter import (LINEAR_FEEDBACK_AT_FULL_RESONANCE,  # noqa: E402
-                                                         ZeroDelayLadderFilter, response_script_code,
+                                                         ZeroDelayLadderFilter,
                                                          small_signal_magnitude)
 from twosl_dsp.techniques.zero_delay_one_pole_filter import ZeroDelayOnePoleFilter  # noqa: E402
 from twosl_dsp.techniques.zero_delay_one_pole_filter import \
@@ -125,16 +124,6 @@ class ZeroDelayLadderFilterTests(unittest.TestCase):
             measured = amplitude_at(out, frequency, self.SAMPLERATE) / 1e-3
             expected = small_signal_magnitude(frequency, 2000.0, 0.7, self.SAMPLERATE)
             self.assertAlmostEqual(20 * math.log10(measured), 20 * math.log10(expected), delta=0.2, msg=frequency)
-
-    def test_the_display_script_is_the_same_response(self):
-        script = response_script_code()
-        for linear in (False, True):
-            for frequency, cutoff, resonance in ((100.0, 700.0, 0.3), (700.0, 700.0, 1.0), (15000.0, 30000.0, 0.5)):
-                value = float(es5.evaluate(script + f"\nladderResponse({frequency}, {cutoff}, "
-                                           f"ladderFeedbackGain({resonance}, {str(linear).lower()}), 48000)"))
-                self.assertAlmostEqual(value, small_signal_magnitude(frequency, cutoff, resonance, 48000.0, linear),
-                                       places=9, msg=(linear, frequency))
-
 
     def test_the_pass_band_is_the_ladder_s_own(self):
         # no make-up inside the technique: a small 60 Hz sine with fc 8 kHz comes out at 1 / (1 + k)
@@ -1488,7 +1477,7 @@ class AntiderivativePiecewiseLinearShaperTests(unittest.TestCase):
             self.assertAlmostEqual(table.integral(x), area, places=5, msg=x)
 
     def test_a_tables_name_is_the_same_on_every_machine(self):
-        # the last digits of computed pieces differ between maths libraries; the name mustn't (build_comparison.py)
+        # the last digits of computed pieces differ between maths libraries; the name mustn't (generated_numbers.py)
         nudged = [(start, slope, intercept * (1 + 4e-16)) for start, slope, intercept in self.CLIP]
         self.assertEqual(PiecewiseLinearTable("clip", nudged).function_name,
                          PiecewiseLinearTable("clip", self.CLIP).function_name)
@@ -1955,16 +1944,6 @@ class SidechainStylePumpTests(unittest.TestCase):
         steepest_step = max(abs(b - a) for a, b in zip(gains, gains[1:]))
         # the quarter-sine ramp in over 6 ms is 0.2 a sample at 8 kHz at its steepest; the hand-over adds no jump
         self.assertLess(steepest_step, 0.16)
-
-    def test_the_display_script_is_the_same_shape(self):
-        script = sidechain_style_pump.response_script_code()
-        for phase, attack_ms, division_ms, release, curve in ((0.0, 6, 250, 0.55, 0.5), (0.01, 6, 250, 0.55, 0.5),
-                                                                (0.3, 6, 250, 0.55, 0.5), (0.9, 6, 250, 0.55, 0.5),
-                                                                (0.1, 40, 62.5, 0.2, 1.0), (0.5, 1, 1000, 0.95, 0.0)):
-            value = float(es5.evaluate(script + f"\nsidechainPumpDuck({phase}, {attack_ms}, {division_ms}, {release}, {curve})"))
-            self.assertAlmostEqual(value, sidechain_style_pump.pump_duck(phase, attack_ms, division_ms, release, curve),
-                                   places=9)
-
 
 def third_difference_rms(signal):
     """RMS of y[n] - 3y[n-1] + 3y[n-2] - y[n-3]: a steep high-pass that a smooth signal barely passes and a step

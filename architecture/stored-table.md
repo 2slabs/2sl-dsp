@@ -24,18 +24,16 @@ surfaces" (references/README.md, "Live presets").
   field's own units (a number; an item name). Init gives every field; a preset gives the fields it changes, each
   whole, and keeps Init's others. A value between codes is held on the nearest code (half up, as the brain rounds).
   A preset's held value is a `HeldTable`; `preset_book.stored_only_values_of_preset` turns it into its parameters'
-  values for every output: Live preset files, the header's Preset menu and the plugin's presets. A device gives
+  values for the plugin's presets. A device gives
   `stored_only_values_of_preset` only for Stored Only parameters of its own (`patch.stored`).
 - **Outside presets**: a table presets leave alone (2sl drums' pattern: its presets are kit sounds) is given
   `initial_outside_presets={field: [one value per row]}` (every field, own units), as a control is: that is its
-  initial value, the preset book can't name it, the Preset menu doesn't set it. Live preset files hold every Stored
-  Only parameter, so a device with Live preset files fails to build with such a table.
+  initial value, the preset book can't name it.
 - **Migrating** state into a table is the preset book's business: a device's migration script writes the table's
   fields into the book's presets (2sl gate: each Lane's steps into Seq B's row).
 - **The brain holds the table** and is the only thing that changes it (`/*STORED_TABLES*/`, filled by
   `stored_tables_brain_code(tables)` once every editor is placed; it also wires each table's writes):
-  - Live recalls a parameter (a set loading, a Live preset, the Preset menu, which sets the parameters as Live
-    would): `<its varname> <code>` reaches the brain, which unpacks it, keeps each changed value, shows it on its
+  - the host recalls a parameter (a set loading, a preset): `<its varname> <code>` reaches the brain, which unpacks it, keeps each changed value, shows it on its
     editors and calls the table's listener;
   - the device's own code calls `storedTableSet(table, field, row, value)` (a display dragged): the value on the
     stored grid is kept, written to its parameter (`<varname> <code>` out of the table's outlet, through a route to

@@ -1,4 +1,4 @@
-# Presets: one preset book, two outputs
+# Presets: one preset book
 
 A device keeps its neutral values, its Init values and its presets in one JSON file, its preset book
 (`twosl_dsp/preset_book.py`):
@@ -13,7 +13,7 @@ A device keeps its neutral values, its Init values and its presets in one JSON f
 Values are in each control's own units: a dial's or number box's number, a menu's or tab's item name, a toggle's
 `off` / `on`; a stored table's `{field: [a value per row]}`, a preset giving only the fields it changes
 (stored-table.md; a table given `initial_outside_presets` is left alone, as a control is). Every control the presets set has an Init value (it is the control's initial value in the patch, the
-default of each gen~ Param it sets, and the displays' starting value); a control given `initial_outside_presets` has
+default of each gen~ Param it sets); a control given `initial_outside_presets` has
 none and presets leave it alone. The build fails on an unknown control, a missing Init value, a value out of range or
 not an item, and a preset name used twice.
 
@@ -24,17 +24,17 @@ object to restore its initial value": Max's Parameter Mode guide, references/REA
 control out of the sound", so a control's initial value is its **neutral** value, never its Init value. Two values per
 control, two jobs:
 
-- **neutral** (`"neutral"` in the book): Live's initial value (`parameter_initial`), the double-click target, the
-  `Default` a Live preset file lists, a plugin host's default. The value at which the control does nothing: 0 for an
+- **neutral** (`"neutral"` in the book): Live's initial value (`parameter_initial`), the double-click target, a
+  plugin host's default. The value at which the control does nothing: 0 for an
   amount, a depth, a send, an added effect's mix, any modulation or velocity amount; the centre of a bipolar control;
   unity (0 dB) for a trim or gain; a menu's, tab's or toggle's off (or first neutral) item. A control with no value
   that does nothing (a cutoff, a time, a pitch, a ratio) takes the musically neutral one (a low-pass fully open, unity
   ratio), and the device's architecture lists each such choice.
-- **start** (`"init"`, or a control's own `initial_outside_presets`): what a fresh device plays, the gen~ Params'
-  defaults, the displays' and the brain's starting values, a fresh plugin's values.
+- **start** (`"init"`, or a control's own `initial_outside_presets`): what a fresh instance plays, the gen~ Params'
+  defaults, the brain's starting values, a fresh plugin's values.
 
-Every control a user can double-click declares a neutral; the build fails on one without (no fallback to Init), on a
-neutral out of range or not an item, and on a neutral naming nothing that takes one. The kit declares the neutrals of
+Every control a user can double-click declares a neutral; the patch fails on one without (no fallback to Init) and on a
+neutral out of range or not an item. The kit declares the neutrals of
 the controls it makes: the output level (0 dB), the Preset menu and a group selector (their first item), the seeded
 random's Seed (0) and Loop (off), the chord block's Chord (held notes) and In key (off). A **Hidden** control is never
 saved, so Live loads it at its initial value every time: its start value is its neutral and the book doesn't name it,
@@ -42,66 +42,26 @@ except a stored table's editors, whose neutral is their field's (`"neutral": {"S
 every field with an editor; stored-table.md). A **Stored Only** parameter has no double-click: its initial value is
 its start value.
 
-**A fresh device loads the Init sound, once.** Live loads a fresh device at its initial values, the neutrals. The
-header holds a Stored Only flag, "Init Applied" (`FRESH_START_FLAG_NAME`), initial 0. On the header's ready, the UI
-script (`freshStart`) reads it (`getvalueof`): at 1 it does nothing; at 0, with every saved control at its neutral
-value, it sets each control whose start value isn't its neutral to it (`FRESH_START`, the Preset menu's way) and sets
-the flag to 1. So:
-
-- a saved set holds the flag at 1 (Live stores a Stored Only parameter with the set) and is never touched;
-- every Live preset file the kit writes holds the flag at 1 in its Stored Only blob, and so does any preset a user
-  saves from a device that has started: a preset is never moved to Init;
-- a set saved before the flag existed loads it at 0 (a parameter the set doesn't hold loads at its initial value)
-  with its own values: some control is away from its neutral, so its values are kept, the flag set to 1, and the Max
-  window says so. The one case this misreads: an old set with every control at its neutral loads the Init sound.
-- `ready` comes again whenever live.thisdevice bangs (a preset loaded, the device saved): the flag is 1 by then.
-
-For the first moment of a fresh device (until ready) the DSP hears the neutral values, as Live sends the initial
-values, then the start values: a smoothed control may glide there (dsp-blocks.md, `HistoriesStartAtTheirTargets` starts a
-smoother at its Param, the start value, but Live's first message moves it). The gen~ defaults stay the start values,
-so every render, export and plugin starts at Init without that step.
-
-What a device must do: give `"neutral"` in its preset book for every control it makes that is saved (not Hidden,
-not the kit's) and for every field of a stored table with an editor; accept the lock change
-(`--accept-live-parameter-changes`: every initial value that moves, and the new "Init Applied" parameter); a plugin
-port regenerates its header (`Parameter::neutral` the host's default, `Parameter::start` set on construction,
-2sl-plugin's architecture/plugins.md). Its tests hold three things: every parameter's initial value in the lock is its neutral (patch.neutral_values);
-a fresh device holds its start values after ready (`twosl_dsp/fresh_start.py` `controls_after_ready`: the built UI
-script in node on the controls as Live loads them) and so plays the Init sound (rendered from those values, compared
-with Init's by `assert_renders_similar`); a set saved with other values (a preset's, the flag at 1:
-`saved_values_of`) comes back unchanged.
-
-Not verified in Live (no Live here): the order of Live's recall and live.thisdevice's bang (the kit's ready has
-always assumed the recall comes first, and waits 800 ms after the bang); that `getvalueof` reads a live.* control
-(Max documents it for objects that support it); how many undo steps the fresh start adds (each Automated and Stored
-or Stored Only parameter the patch sets is an undo step, the Production Guidelines say, which wants one undo for
-adding a device); and that a `[delay]` waits for audio on (the guidelines: with the audio engine off it fires only
-when audio is turned on, so a fresh device inserted with audio off starts at neutral until then).
+**A fresh plugin plays the Init sound.** Its host parameters start at their start values (`Parameter::start`, set
+on construction: 2sl-plugin architecture/plugins.md) and a host's default is the neutral. The header's Stored Only
+"Init Applied" flag (`FRESH_START_FLAG_NAME`) is still a parameter of the patch and the lock (the Max device's
+fresh-start flag); the plugins' builds leave it out of the host's parameters. A plugin's tests hold every
+parameter's initial value in the lock to its neutral (patch.neutral_values).
 
 **The Init values are the gen~ Params' defaults: one source.** A Param a control sets leaves its default out of the
 device's GenExpr (`Param cutoff(min=40, max=12000);`); the patch builder writes it into the code the patch holds, the
 value the initial values send that Param (scaled, looked up, or a tempo-synced time at 120 BPM, as the route sends
-it: `DevicePatchBuilder.write_gen_param_defaults`, `genexpr.code_with_param_defaults`). A Param no control sets (Stop's
-panic, Live's tempo from the brain) keeps the default its code writes. The build fails, listing each, on a Param with a
+it: `DevicePatchBuilder.gen_code_as_built`, `genexpr.code_with_param_defaults`). A Param no control sets (Stop's
+panic, Live's tempo from the brain) keeps the default its code writes. `gen_code_as_built` fails, listing each, on a Param with a
 default in its code that a control also sets (two sources), a Param with neither, two controls starting one Param at
 different values, and a value outside the Param's min / max. Whatever renders or exports the code as given sets those
 Params first: `GenProgram.run` refuses while one is unset, `genexpr_export.export_c` refuses code without its defaults
 (export `DevicePatchBuilder.gen_code_as_built`), and a MatchedVoice must search or fix each.
 
-The same book makes either or both outputs:
-
-- **Live preset files** (`.adv`, `twosl_dsp/live_preset_files.py`), when the device passes `LivePresetFiles(...)` to
-  `build_device`: one file per preset next to the development device and next to the frozen release, named
-  `<group> - <name>.adv` (`<name>.adv` for the group `init`), each made for that exact device file (its name, size and
-  CRC). Stored Only parameters go in the preset's blob: a stored table's from the preset itself (stored-table.md),
-  a device's own from its `stored_only_values_of_preset(values)` (2sl stab: the Pattern's steps). Known forms only (float and enum parameters, a Max Instrument or a Max Audio Effect): an Int parameter or
-  another device type fails the build until a file Live wrote shows its form.
-- **A Preset menu** (`header(..., preset_menu=(x, width))`): a live.menu in the header listing the presets; the UI
-  script sets every saved control from the chosen preset, a stored table's Stored Only parameters too (they tell the
-  brain, as Live's recall does) (ignored until the device is ready, so a set's saved values win when Live reopens it).
-
-A preset book with presets and neither output is legal: the presets are then only checked. Stale `.adv` files (no
-preset of that name) are removed from devices/ with a line in the build's log.
+The book makes the plugin's factory presets (each plugin's plugin/generate.py, through 2sl-plugin's twosl_plugin:
+the host values and the `.vstpreset` files). Stored Only parameters go in a preset as values: a stored table's from the
+preset itself (stored-table.md), a device's own from its `stored_only_values_of_preset(values)` (2sl stab: the
+Pattern's steps).
 
 ## Every preset about as loud as Init
 
@@ -118,8 +78,8 @@ The pattern: the kit holds the phrase, the meter, the comparison, where a voice'
 (`oscillator_start_phases`: unrelated phases, seeded, as Live's voices are after running on between notes; a player
 sets them through `GenProgram.set_history`), and each preset's controls as the device's DSP gets
 them, read through the device's own built patch (`messages_by_preset` / `messages_for`: the routes its build wired;
-a time synced to Live's tempo at the phrase's 120 BPM). So a device builds its patch in memory (a function its build
-calls before writing) and never keeps a second map of its controls. The device's tests hold the rest: how a note
+a time synced to Live's tempo at the phrase's 120 BPM). So a device builds its patch in memory (the function its plugin
+build calls) and never keeps a second map of its controls. The device's tests hold the rest: how a note
 reaches its DSP (standing in for its brain) and its render.
 
 ## An audio effect: as loud as bypass

@@ -366,8 +366,8 @@ def small_signal_response(frequency_hz, clock_hz, damping, clock_ratio=100):
 
 
 def response_script_code():
-    """The ES5 `ltc1060Mf10SectionResponse(frequencyHz, clockHz, damping, clockRatio)` for a device's displays, with
-    the module's constants filled in (templates/ltc1060-mf10-section-response.template.js)."""
+    """The ES5 `ltc1060Mf10SectionResponse(frequencyHz, clockHz, damping, clockRatio)` for a drawing of the
+    response (2sl filter's graph), with the module's constants filled in (templates/ltc1060-mf10-section-response.template.js)."""
     from twosl_dsp.generated_scripts import fill_template, kit_template_text
     return fill_template(kit_template_text("ltc1060-mf10-section-response.template.js"), {
         "LTC1060_MF10_LOWEST_CENTER_HZ": repr(LOWEST_CENTER_HZ),

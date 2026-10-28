@@ -9,12 +9,10 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from twosl_dsp import es5  # noqa: E402
 from twosl_dsp.build_error import BuildError  # noqa: E402
-from twosl_dsp.generated_scripts import check_es5  # noqa: E402
 from twosl_dsp.circuit_modules.twin_phaser import (TwinPhaser, TwinPhaserCharacter,  # noqa: E402
                                                      RUNTIME_CHARACTER_FIELDS, cell_ohms, feedback_gain,
-                                                     feedback_pot_position, phasor_notches_hz, phasor_response,
+                                                     feedback_pot_position, phasor_notches_hz,
                                                      phasor_small_signal_response, stage_corner_hz)
 from gen_block_harness import amplitude_at, harness, phase_degrees  # noqa: E402
 from twosl_dsp.model_accuracy import assert_matches_model  # noqa: E402
@@ -273,9 +271,9 @@ def rendered_notch_hz(program, output, around_hz, step=0.01):
     return around_hz * math.exp(step * (levels[0] - levels[2]) / (2 * (levels[0] - 2 * levels[1] + levels[2])))
 
 
-class DisplayResponseTests(unittest.TestCase):
-    # the display script (response_script_code) = the Python model (phasor_response, phasor_notches_hz), and the
-    # notches it finds from the module's own readings (the corner, the wiper, the spread) are the rendered unit's
+class ResponseTests(unittest.TestCase):
+    # the notches the Python model (phasor_response, phasor_notches_hz) finds from the module's own readings (the
+    # corner, the wiper, the spread) are the rendered unit's
 
     def test_the_readings_are_the_wiper_and_the_spread(self):
         _, program = unit_with_spread_and_taper_at_run_time(feedback_a=0.6, feedback_b=0.3, spread=0.2, taper=2.0)
@@ -284,31 +282,6 @@ class DisplayResponseTests(unittest.TestCase):
             feedback_pot_taper_exponent=2.0)), places=12)
         self.assertAlmostEqual(out[5][-1], 0.09, places=12)
         self.assertAlmostEqual(out[6][-1], 0.2, places=12)
-
-    def test_the_display_script_is_the_modules_response_and_notches(self):
-        for character in (TwinPhaserCharacter(), TwinPhaserCharacter(wet_trim_ohms=2000.0,
-                                                                           bypass_led_current_amps=4e-3)):
-            block = TwinPhaser("bi_phase", input_a_volts="0", input_b_volts="0", rate_1_hz="1", rate_2_hz="1",
-                                  shape_1="0", shape_2="0", depth_a="1", depth_b="1", feedback_a="0", feedback_b="0",
-                                  sweep_a_source="0", sweep_b_source="0", sweep_sync="0", phasor_b_input="0",
-                                  foot_switch_a="1", foot_switch_b="1", pedal_volts="0", character=character)
-            script = block.response_script_code()
-            check_es5({"twin-phaser-response.js": script})
-            for corner, position, spread, rate, phasor in ((112.0, 0.0, 0.05, 44100, "a"), (500.0, 0.4, 0.05, 48000, "b"),
-                                                           (1800.0, 1.0, 0.3, 22050, "a"), (3400.0, 0.7, 0.0, 96000, "b")):
-                with self.subTest(corner=corner, position=position, spread=spread, rate=rate, phasor=phasor):
-                    for frequency in (30.0, corner, 7000.0):
-                        drawn = float(es5.evaluate(script + f"\nbi_phase_phasor_response({frequency}, {corner}, "
-                                                            f"{position}, {spread}, {rate}, '{phasor}')"))
-                        self.assertAlmostEqual(drawn / abs(phasor_response(frequency, corner, position, spread, rate,
-                                                                           phasor, character)), 1.0, places=9)
-                    drawn = [float(v) for v in es5.evaluate(script + f"\nbi_phase_phasor_notches_hz({corner}, "
-                                                                     f"{position}, {spread}, {rate}, '{phasor}')"
-                                                                     ".join(',')").split(",")]
-                    model = phasor_notches_hz(corner, position, spread, rate, phasor, character)
-                    self.assertEqual(len(drawn), 3)
-                    for x, y in zip(drawn, model):
-                        self.assertAlmostEqual(x / y, 1.0, places=6)
 
     def test_the_rendered_notches_are_where_phasor_notches_hz_finds_them(self):
         # from the low end (the coupling capacitors pull the low notch far up: ~1.9 x its equal-stage place at a

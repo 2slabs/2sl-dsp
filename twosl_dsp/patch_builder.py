@@ -1,54 +1,49 @@
-"""DevicePatchBuilder: one Max for Live device's patch, built box by box, with what the build checks recorded.
+"""DevicePatchBuilder: a plugin's patch, built box by box in memory, which its build reads its parameters, routes, gen~
+code and presets off (each plugin's plugin/generate.py, 2sl-plugin twosl_plugin/parameters.py). Nothing is written
+from it: the patch's shape (Max boxes, Live parameters) is what the plugins' builds read until phase 2 of 2sl-plugin
+PLANS/2026-10-28-plugins-without-max.md describes each plugin in C++ and this module goes.
 
-A device's build makes one builder and calls its helpers: boxes and wires, gen~ patchers (their GenExpr checked by
+A device's sources make one builder and call its helpers: boxes and wires, gen~ patchers (their GenExpr checked by
 twosl_dsp/genexpr.py), Live parameters (dials, menus, tabs, toggles, number boxes, Stored Only values) with their Info
-View text, displays (jsui running the views script), the shared header (2sl link chip, page tabs, optional Preset
-menu, output level, Stop), Live's transport and Live Set properties, and the Stop action. twosl_dsp/device_build.py
-then checks it (`check(layout)`), generates its scripts and writes the device.
+View text, displays, the shared header (page tabs, optional Preset menu, output level, Stop), Live's transport and
+Live Set properties, and the Stop action. The checks a plugin build runs on it: `check_messages_into_gen_name_params`
+and `check_script_messages_into_gen` (every message into a gen~ names one of its Params), and the gen~ Param defaults
+(`gen_param_defaults_by_box`, through `gen_code_as_built`).
 
-Two values per control, both from the preset book (twosl_dsp/preset_book.py) (architecture/presets.md, "Neutral, Init,
-and a fresh device"):
+Two values per control, both from the preset book (twosl_dsp/preset_book.py) (architecture/presets.md, "Neutral,
+Init, and a fresh device"):
   - its **neutral** value: Live's initial value (`parameter_initial`), what a double-click sets it to: the value that
     takes it out of the sound. Every control a user can double-click declares one in the book's "neutral"; the kit
     declares its own (the output level's unity, the Preset menu's and a group selector's first item). A Hidden
     control (never saved: it loads at its initial value every time) has its start value as its neutral, or the kit's
     (a stored table editor's: its field's neutral).
-  - its **start** value: what a fresh device starts at. A control the presets set starts at the book's Init value; a
-    control given `initial_outside_presets` is saved with the set but presets leave it alone (a group selector, the
-    Preset menu itself, a device's pattern tools) and starts there. The gen~ Params' defaults, the displays' starting
-    values and the tempo pairs are the start values.
-A fresh device loads at the neutral values (Live's), and the UI script moves every saved control whose start value
-differs to it once, on its first ready, then sets the Stored Only "Init Applied" flag (FRESH_START_FLAG_NAME) so a
-saved set or a preset (the flag 1 in it) is never overridden.
+  - its **start** value: what a fresh instance starts at. A control the presets set starts at the book's Init value; a
+    control given `initial_outside_presets` is saved but presets leave it alone (a group selector, the Preset menu
+    itself, a device's pattern tools) and starts there. The gen~ Params' defaults and the tempo pairs are the start
+    values.
 
-A gen~ Param a control sets has no default in the device's GenExpr (`Param cutoff(min=40, max=12000);`): the build
-writes it, the value the initial values send that Param (`write_gen_param_defaults`), so the Init values are its one
-source. A Param no control sets (Stop's panic, Live's tempo from the brain) keeps the default its code writes.
+A gen~ Param a control sets has no default in the device's GenExpr (`Param cutoff(min=40, max=12000);`):
+`gen_code_as_built` writes it, the value the initial values send that Param, so the Init values are its one source. A
+Param no control sets (Stop's panic, Live's tempo from the brain) keeps the default its code writes.
 
 The device's latency (`latency_samples`, required): its Defined Latency, a whole number of samples, the patcher's
-`"latency"`, which Live's delay compensation takes (references/README.md, "Defined Latency"). It is the device
-latency rule's figure (architecture/overview.md, "Defined Latency"; twosl_dsp/techniques/defined_latency_pad.py):
+`"latency"` (architecture/overview.md, "Defined Latency"; twosl_dsp/techniques/defined_latency_pad.py):
 `DefinedLatency({path: the sum of its blocks' latency_samples}).declared_latency_samples`, the latest path rounded
-up, every path padded to it; never typed, never rounded here (a fraction fails the build: it would be rounded
-somewhere no test sees). A device with no delay declares 0.
+up, every path padded to it; never typed, never rounded here (a fraction fails: it would be rounded somewhere no test
+sees). A device with no delay declares 0.
 
 A page can hold groups of controls that a selector shows one at a time: a live.tab (`group_selector`), or any
-control (`groups_selected_by`). The layout contract is twosl_dsp/layout_rules.py's.
+control (`groups_selected_by`). Widths and places are twosl_dsp/layout_rules.py's.
 """
-import json
 import re
 
 from twosl_dsp import genexpr
 from twosl_dsp import layout_rules
 from twosl_dsp import live_parameter_identity as identity
 from twosl_dsp.build_error import BuildError
-from twosl_dsp.display_text import display_paints
 from twosl_dsp.generated_numbers import generated_number
-from twosl_dsp.generated_scripts import fill_template, kit_template_text
-from twosl_dsp.max_time_values import check_note_values_in_box_text
 from twosl_dsp.script_outlet_calls import outlet_calls
-from twosl_dsp.preset_book import TOGGLE_ITEMS, SavedControl, SavedRecord, stored_only_values_of_preset
-from twosl_dsp.themes import theme_from_live_js
+from twosl_dsp.preset_book import TOGGLE_ITEMS, SavedControl, SavedRecord
 
 # what a tempo-synced time (tempo_synced_milliseconds) is computed at before Live tells the tempo: the [pak]'s initial
 # tempo, so the gen~ Param default it writes too
@@ -57,15 +52,10 @@ MAX_APPLICATION_VERSION = {"major": 9, "minor": 1, "revision": 5, "architecture"
 LIVE_OBJECT_OUTLETS = {"live.dial": (2, ["", "float"]), "live.menu": (3, ["", "", "float"]),
                        "live.tab": (3, ["", "", "float"]), "live.text": (2, ["", ""]),
                        "live.numbox": (2, ["", "float"])}
-CONTROL_KINDS = ("dial", "text", "menu", "tab", "numbox")    # how the UI script recolours them
 INT_PARAMETER_VALUES = 256                                    # Live's Int type holds 0-255 steps
-# The Stored Only flag a fresh device starts at 0 and the UI script sets to 1 once it has moved the controls to their
-# start values (the Init sound): saved with the set and in every preset, so a set or preset reopened is left alone.
+# A Stored Only flag in the header (the Max device's fresh-start flag), still a parameter of the patch and the lock:
+# the plugins' builds leave it out of the host's parameters by this name
 FRESH_START_FLAG_NAME = "Init Applied"
-# how far a float control's value may sit from its neutral and still count as "at neutral" (a fraction of its range):
-# Live keeps a float parameter's value as a position (live_parameter_identity.py), so a recalled value may be off by
-# a last bit
-NEUTRAL_TOLERANCE_OF_RANGE = 1e-4
 
 
 def varname_for(long_name):
@@ -75,11 +65,6 @@ def varname_for(long_name):
 
 def identity_transform(value):
     return value
-
-
-def sent_text(value):
-    """A value sent a display, as a problem names it: a number, or a message's several numbers."""
-    return " ".join(f"{v:g}" for v in value) if isinstance(value, list) else f"{value:g}"
 
 
 class DevicePatchBuilder:
@@ -105,7 +90,6 @@ class DevicePatchBuilder:
         self.page_names = list(page_names)
         self.info = dict(info)                     # its own copy: blocks add their controls' text to it
         self.preset_book = preset_book
-        self.info_used = set()
         self.boxes, self.lines = [], []
         self.boxes_by_id = {}                       # box id -> [box] (a list: find() names an id given twice)
         self.box_count = 0
@@ -113,16 +97,9 @@ class DevicePatchBuilder:
         self.saved_controls = {}                    # long name -> SavedControl: the controls presets set
         self.initial_values = {}                    # long name -> its start value as held (Init, or its own)
         self.neutral_values = {}                    # long name -> its neutral value as held (Live's initial value)
-        self.neutral_names_asked = set()            # every name whose neutral the preset book was asked for
-        self.neutral_by_varname = {}                # saved control's varname -> [neutral as held, tolerance]
-        self.fresh_start_by_varname = {}            # saved control's varname -> its start value, where not neutral
         self.groups = {}                            # selector varname -> {"page": page, "members": [[varname]]}
-        self.controls_by_kind = {kind: [] for kind in CONTROL_KINDS}
-        self.view_varnames = []
         self.control_by_box = {}                    # box id -> (control long name, the value's transform on the way)
         self.view_mode_by_box = {}
-        self.view_defaults = {}                     # view mode -> {message: value it gets from the Init values}
-        self.view_readings = {}                     # view box id -> [(message, [values])]: what else it shows
         self.gen_param_from_init = []               # (gen box id, Param name, value the initial values send, control)
         self.gen_params_by_box = {}                 # gen~ box id -> {Param name: ParamDecl} of the code as given
         self.gen_code_by_box = {}                   # gen~ box id -> its code as given (defaults left out)
@@ -131,7 +108,6 @@ class DevicePatchBuilder:
         self.script_outlets_of_blocks = {}
         self.control_routes = []                    # (control, transform, destination box, message or None, scale)
         self.tempo_routes = []                      # (control, beats of its value as held, destination box, message)
-        self.stop_turns_off = []                    # varnames of controls the Stop action sets to 0
         self.header_boxes = None
         self.live_set_path = None                   # the live.path at live_set, once a Live Set property is observed
         self.live_set_observers = {}
@@ -150,8 +126,6 @@ class DevicePatchBuilder:
         if outs:
             new_box["outlettype"] = outtype or [""] * outs
         new_box.update(extra)
-        if cls == "newobj" and text is not None:
-            check_note_values_in_box_text(text, f"{self.device_name}: box {new_box['id']}")
         self.boxes.append({"box": new_box})
         self.boxes_by_id.setdefault(new_box["id"], []).append(new_box)
         return new_box["id"]
@@ -213,8 +187,7 @@ class DevicePatchBuilder:
         """A control's neutral value as held, Live's initial value (the double-click target): the preset book's
         neutral value; the kit's (`kit_neutral`) for a control the kit makes; a Hidden control's start value unless
         the kit gives one. Records its start value: the preset book's Init value (the control is then one presets
-        set), or `initial_outside_presets` (as held) for a control presets leave alone. A saved control whose start
-        differs from its neutral is moved there on a fresh device's first ready (the UI script)."""
+        set), or `initial_outside_presets` (as held) for a control presets leave alone."""
         if name in self.initial_values:
             self.fail(f"two controls are called {name!r}")
         control = SavedControl(name, varname_for(name), None if items is None else list(items),
@@ -237,22 +210,14 @@ class DevicePatchBuilder:
                           + ": leave it out of 'neutral'")
             neutral = kit_neutral if kit_neutral is not None else start
         else:
-            self.neutral_names_asked.add(name)
             neutral = self.preset_book.neutral_value_as_held(control)
         self.initial_values[name] = start
         self.neutral_values[name] = neutral
-        if not hidden:
-            varname = varname_for(name)
-            tolerance = 0 if items is not None else NEUTRAL_TOLERANCE_OF_RANGE * (maximum - minimum)
-            self.neutral_by_varname[varname] = [neutral, generated_number(tolerance)]
-            if start != neutral:
-                self.fresh_start_by_varname[varname] = start
         return neutral
 
     def neutral_of_record(self, record):
         """A saved record's neutral value, {field name: value in its field's own units}, from the preset book: its
         editors' double-click targets. Asked only by a record with editors."""
-        self.neutral_names_asked.add(record.name)
         neutral = self.preset_book.neutral_value_in_own_units(record.name)
         if not isinstance(neutral, dict):
             self.fail(f"{record.name!r}'s neutral value in {self.preset_book.source_name} must be "
@@ -299,7 +264,6 @@ class DevicePatchBuilder:
         annotation = {}
         if name in self.info:
             title, text = self.info[name]
-            self.info_used.add(name)
             # Max saves these on the box and mirrors them in the parameter's saved values (as it writes them itself)
             annotation = {"annotation_name": title, "annotation": text}
             saved_values.update(parameter_annotation_name=title, parameter_info=text)
@@ -356,8 +320,7 @@ class DevicePatchBuilder:
 
     def tell(self, source, message, destination, inlet=0, scale=None):
         """Wire `source`'s value to `destination` as `message value` (or raw when message is None). A control's value
-        told a display becomes that display's starting value; told a gen~, the Param's default (the build writes it
-        into the code: write_gen_param_defaults), both through generated_number. Every
+        told a gen~ gives the Param's default (gen_code_as_built writes it into the code), through generated_number. Every
         control's route is recorded for messages_for (a raw value as the message None)."""
         if source in self.control_by_box:
             control_name, transform = self.control_by_box[source]
@@ -366,9 +329,7 @@ class DevicePatchBuilder:
             control_name, transform = self.control_by_box[source]
             if control_name in self.initial_values:
                 sent = generated_number(transform(self.initial_values[control_name]) * (scale if scale is not None else 1))
-                if destination in self.view_mode_by_box:
-                    self.view_defaults.setdefault(self.view_mode_by_box[destination], {})[message] = sent
-                elif destination in self.gen_params_by_box:
+                if destination in self.gen_params_by_box:
                     self.gen_param_from_init.append((destination, message, sent, control_name))
         chain = source
         if scale is not None:
@@ -453,7 +414,6 @@ class DevicePatchBuilder:
                                      **hidden)
         varname = varname_for(name)
         self.on_page(page, box_id, varname, group)
-        self.controls_by_kind["dial"].append(varname)
         self.tell(box_id, message, target, inlet, scale if scale != 1.0 else None)
         for view_box, view_message in views:
             self.tell(box_id, view_message, view_box, 0, scale if scale != 1.0 else None)
@@ -470,7 +430,6 @@ class DevicePatchBuilder:
                                      parameter_enum=list(items), parameter_mmax=len(items) - 1,
                                      parameter_initial_enable=1, parameter_initial=[initial], **hidden)
         varname = varname_for(name)
-        self.controls_by_kind["menu"].append(varname)
         return self.on_page(page, box_id, varname, group)
 
     def tabs(self, name, short, items, x, y, w, page, initial_outside_presets=None, group=None, rows=1,
@@ -494,14 +453,13 @@ class DevicePatchBuilder:
                                      parameter_initial=[initial], **hidden)
         varname = varname_for(name)
         self.find(box_id).update(num_lines_patching=rows, num_lines_presentation=rows)
-        self.controls_by_kind["tab"].append(varname)
         return self.on_page(page, box_id, varname, group)
 
     def groups_selected_by(self, selector_box, choice_count, page):
         """Make `selector_box` (any control whose value is a choice 0..choice_count-1) show one group of boxes on
         `page` at a time; boxes join a group with group=(the selector's varname, i). The patch shows its first group
         (the boxes of the others are saved hidden), so the selector's neutral value (Live's initial value, what the
-        device loads at) must be 0; its start value reaches the UI script as any change does."""
+        device loads at) must be 0."""
         varname = self.find(selector_box)["varname"]
         if varname in self.groups:
             self.fail(f"{varname!r} selects groups twice")
@@ -533,7 +491,6 @@ class DevicePatchBuilder:
         box_id = self.live_parameter("live.text", name, short, (1500 + x, 660 + y, w, h), identity.PARAMETER_TYPE_ENUM,
                                      (x, y, w, h), _mode=mode, **initial_values, **hidden)
         varname = varname_for(name)
-        self.controls_by_kind["text"].append(varname)
         return self.on_page(page, box_id, varname, group)
 
     def numbox(self, name, short, target, message, minimum, maximum, unit, x, y, w, page, integer=False,
@@ -551,7 +508,6 @@ class DevicePatchBuilder:
                                      parameter_initial=[float(initial)], parameter_unitstyle=unit)
         varname = varname_for(name)
         self.on_page(page, box_id, varname, group)
-        self.controls_by_kind["numbox"].append(varname)
         self.tell(box_id, message, target, inlet)
         return box_id
 
@@ -583,7 +539,6 @@ class DevicePatchBuilder:
             if info not in self.info:
                 self.fail(f"view {mode!r} names Info View text {info!r}, which the info doesn't have")
             title, text = self.info[info]
-            self.info_used.add(info)
             extra.update(annotation_name=title, annotation=text)
         elif not background:
             # only the background (it ignores clicks, so it is never hovered) may go without
@@ -591,7 +546,6 @@ class DevicePatchBuilder:
         box_id = self.box(cls="jsui", rect=(1500 + x, 1000 + y, w, h), ins=1, outs=1,
                           filename=self.views_script_name(), jsarguments=[mode], presentation=1,
                           presentation_rect=[float(x), float(y), float(w), float(h)], border=0, **extra)
-        self.view_varnames.append(f"view_{mode}")
         self.view_mode_by_box[box_id] = mode
         return self.on_page(page, box_id, f"view_{mode}", group)
 
@@ -650,47 +604,33 @@ class DevicePatchBuilder:
                                       visibility=identity.VISIBILITY_HIDDEN)
         self.tell(made["page_tabs"], "page", made["ui"])
         self.tell(made["page_tabs"], "page", made["chrome"])
-        self.preset_menu_x = None
         made["preset"] = None
         if preset_menu is not None:
-            self.preset_menu_x, preset_menu_width = preset_menu
-            made["preset"] = self.menu("Preset", "Preset", ["-"], self.preset_menu_x, header_y, preset_menu_width, None,
-                                       initial_outside_presets=0, kit_neutral=0)  # items: the preset book's, set by check()
+            preset_menu_x, preset_menu_width = preset_menu
+            made["preset"] = self.menu("Preset", "Preset", ["-"], preset_menu_x, header_y, preset_menu_width, None,
+                                       initial_outside_presets=0, kit_neutral=0)
             self.wire(made["preset"], made["ui"])
-        self.subtitle_x = layout_rules.subtitle_x(self.link_chip_text, self.page_names, preset_menu)
         # the right end of the header: out (the output level) and Stop, 12 px from the device's edge
-        self.output_level_x = self.device_width - 136
+        output_level_x = self.device_width - 136
         # unity (0 dB) is the output level's neutral, the kit's for every device
         output_level_initial = self.initial(output_level_name, minimum=-36.0, maximum=12.0, kit_neutral=0.0)
         made["output_level"] = self.live_parameter("live.numbox", output_level_name, output_level_name,
                                                    (1500, 520, 64, 15), identity.PARAMETER_TYPE_FLOAT,
-                                                   (float(self.output_level_x), float(header_y), 64.0, 15.0),
+                                                   (float(output_level_x), float(header_y), 64.0, 15.0),
                                                    parameter_mmin=-36.0, parameter_mmax=12.0,
                                                    parameter_initial_enable=1,
                                                    parameter_initial=[float(output_level_initial)],
                                                    parameter_unitstyle=4)
         output_level_varname = varname_for(output_level_name)
         self.find(made["output_level"]).update(varname=output_level_varname)
-        self.controls_by_kind["numbox"].append(output_level_varname)
         self.tell(made["output_level"], "volume", output_level_target)
-        # the fresh-start flag (FRESH_START_FLAG_NAME): 0 in a fresh device, 1 once the UI script has moved the controls
-        # to their start values; saved with the set and in presets (Stored Only), read and set by the UI script
+        # the fresh-start flag (FRESH_START_FLAG_NAME), Stored Only, starting at 0
         made["fresh_start_flag"] = self.stored(FRESH_START_FLAG_NAME, 0)
         made["stop"] = self.live_parameter("live.text", "Stop", "Stop", (1500, 540, 48, 15),
                                            identity.PARAMETER_TYPE_ENUM,
                                            (float(self.device_width - 60), float(header_y), 48.0, 15.0), _mode=0)
         self.find(made["stop"]).update(varname="stop")
-        self.controls_by_kind["text"].append("stop")
         return made
-
-    def header_labels(self):
-        """The header's labels, drawn by the chrome on every page: "preset" before the Preset menu, "out" before
-        the output level (text, x, baseline, kind)."""
-        labels = []
-        if self.preset_menu_x is not None:
-            labels.append(["preset", self.preset_menu_x - 40, 15, "label"])
-        labels.append(["out", self.output_level_x - 24, 15, "label"])
-        return labels
 
     def live_set_observer(self, property_name):
         """A live.observer of the Live Set's `property_name` (Live Object Model, Song), started when the device
@@ -748,9 +688,9 @@ class DevicePatchBuilder:
         return observers
 
     def stop_action(self, brain, brain_inlet, panic_destinations):
-        """The header's Stop button: `stop` to the brain and the UI script (which sets every control given to
-        `turned_off_by_stop` to 0), then a new `panic <count>` number to each of `panic_destinations` (a gen~ ramps
-        to silence on every new number). Live's transport stopping doesn't run it."""
+        """The header's Stop button: `stop` to the brain and the header's script box, then a new `panic <count>`
+        number to each of `panic_destinations` (a gen~ ramps to silence on every new number). Live's transport
+        stopping doesn't run it."""
         header = self.built_header()
         stop_order = self.box("t b b", rect=(1100, 200, 40, 22), outs=2, outtype=["bang", "bang"])
         stop_message = self.box(cls="message", text="stop", rect=(1230, 230, 40, 22), ins=2, outs=1)
@@ -766,37 +706,7 @@ class DevicePatchBuilder:
         for destination in panic_destinations:
             self.wire(panic_message, destination)
 
-    def turned_off_by_stop(self, control_box):
-        """The Stop action sets this control to 0 (2sl stab: Freeze)."""
-        self.stop_turns_off.append(self.find(control_box)["varname"])
-
     # ---- checks -------------------------------------------------------------------------------------------
-
-    def check(self, layout):
-        """Every check of the patch as built, with the chrome's `layout` (see views_script); returns the presets
-        ([Preset], every saved control set). Fills in the Preset menu's items. Fails on the first broken rule, saying
-        what to fix."""
-        self.built_header()
-        presets = self.preset_book.presets_as_held(self.saved_controls)
-        unknown_neutral = set(self.preset_book.neutral_values_in_own_units) - self.neutral_names_asked
-        if unknown_neutral:
-            self.fail(f"'neutral' in {self.preset_book.source_name} names no control that takes one (a control or a "
-                      f"stored table with editors, not Hidden, not the kit's): {sorted(unknown_neutral)}")
-        if self.header_boxes["preset"] is not None:
-            preset_values = self.find(self.header_boxes["preset"])["saved_attribute_attributes"]["valueof"]
-            preset_values.update(parameter_enum=[preset.name for preset in presets], parameter_mmax=len(presets) - 1)
-        self.check_messages_into_gen_name_params()
-        self.write_gen_param_defaults()
-        self.check_controls_hold_their_text()
-        problems = layout_rules.drawn_overlap_problems([x["box"] for x in self.boxes], self.full_layout(layout),
-                                                       self.page_names, self.pages, self.groups, self.device_width)
-        if problems:
-            self.fail("the layout overlaps (layout_rules.drawn_overlap_problems):\n  " + "\n  ".join(problems))
-        if set(self.info) - self.info_used:
-            self.fail(f"the info has text for no parameter or view: {sorted(set(self.info) - self.info_used)}")
-        self.check_script_lookups()
-        self.check_wires()
-        return presets
 
     def wires_into_gen(self):
         """[(source box id, source outlet, gen~ box id)] for every wire straight into a gen~ box."""
@@ -892,107 +802,6 @@ class DevicePatchBuilder:
         if problems:
             self.fail("script messages into a gen~:\n  " + "\n  ".join(problems))
 
-    def view_reading(self, view_box, message, values):
-        """Display `view_box` shows `message`, a reading sent by something other than a control (the DSP, the
-        brain), as `message value` with each of `values` (a number, or a list of numbers for a message of several;
-        the first is where the display check starts): the display check drives the display through them as through
-        its controls' values (check_display_texts)."""
-        if view_box not in self.view_mode_by_box:
-            self.fail(f"view_reading {message!r}: box {view_box} is no display")
-        if not values:
-            self.fail(f"view_reading {message!r} of the {self.view_mode_by_box[view_box]!r} display: no values")
-        self.view_readings.setdefault(view_box, []).append(
-            (message, [[generated_number(float(n)) for n in v] if isinstance(v, (list, tuple)) else
-                       generated_number(float(v)) for v in values]))
-
-    def saved_values_of(self, control_name):
-        """The saved values (`saved_attribute_attributes.valueof`) of the control called `control_name`."""
-        found = [entry["box"]["saved_attribute_attributes"]["valueof"] for entry in self.boxes
-                 if entry["box"].get("saved_attribute_attributes", {}).get("valueof", {})
-                 .get("parameter_longname") == control_name]
-        if len(found) != 1:
-            self.fail(f"control {control_name!r}: {len(found)} boxes are called that, not one")
-        return found[0]
-
-    def display_inputs(self, view_box):
-        """[(message, [values], start index)]: what display `view_box` can be sent, for the display check. A
-        control's message: every value it can send (its held values, layout_rules.live_held_values, a float at
-        DISPLAY_SWEEP_STEPS steps; through its route's transform and scale), starting at its start value; a
-        reading's (view_reading): its values, starting at the first."""
-        values_by_message, start_by_message = {}, {}
-        for control_name, transform, destination, message, scale in self.control_routes:
-            if destination != view_box or message is None:
-                continue
-            factor = scale if scale is not None else 1
-            sent = lambda held: generated_number(transform(held) * factor)  # noqa: E731
-            held_values = layout_rules.live_held_values(self.saved_values_of(control_name),
-                                                        layout_rules.DISPLAY_SWEEP_STEPS)
-            values = values_by_message.setdefault(message, [])
-            for value in [sent(self.initial_values[control_name])] + [sent(held) for held in held_values]:
-                if value not in values:
-                    values.append(value)
-            start_by_message.setdefault(message, sent(self.initial_values[control_name]))
-        for control_name, _, destination, message in self.tempo_routes:
-            if destination == view_box:
-                self.fail(f"the {self.view_mode_by_box[view_box]!r} display gets {control_name} as a time at Live's "
-                          f"tempo ({message!r}): the display check can't drive it through Live's tempos yet")
-        for message, values in self.view_readings.get(view_box, []):
-            if message in values_by_message:
-                self.fail(f"the {self.view_mode_by_box[view_box]!r} display's reading {message!r} is also a "
-                          "control's message")
-            values_by_message[message] = [v for i, v in enumerate(values) if v not in values[:i]]
-            start_by_message[message] = values[0]
-        return [(message, values, values.index(start_by_message[message]))
-                for message, values in values_by_message.items()]
-
-    def check_display_texts(self, views_script_text):
-        """No display draws two texts over each other or a text off itself, as first painted and driven through what
-        it can be sent (display_text.display_paints, display_inputs, layout_rules.display_text_problems): every shown
-        display but the background. Each display with a problem: every problem of its first paint that has one, with
-        what the display had been sent, and how many of its other paints have one too."""
-        problems = []
-        for box_id, mode in sorted(self.view_mode_by_box.items()):
-            box = self.find(box_id)
-            if box.get("background"):
-                continue
-            _, _, width, height = box["presentation_rect"]
-            failing = []
-            for painted in display_paints(views_script_text, mode, width, height, self.display_inputs(box_id)):
-                found = layout_rules.display_text_problems(box["varname"], [(d.text, d.extent) for d in painted.drawn],
-                                                           width, height)
-                if found:
-                    failing.append((painted.sent, found))
-            if failing:
-                sent, found = failing[0]
-                when = ("sent " + ", ".join(f"{m} {sent_text(v)}" for m, v in sent.items())) if sent else \
-                    "as first painted"
-                problems += [f"{problem} ({when})" for problem in found]
-                if len(failing) > 1:
-                    problems.append(f"display {box['varname']}: and {len(failing) - 1} more of its paints, sent other "
-                                    "values, have text over text or off the display")
-        if problems:
-            self.fail("text drawn over text in a display (layout_rules.display_text_problems):\n  "
-                      + "\n  ".join(problems))
-
-    def check_controls_hold_their_text(self):
-        """Every shown live.dial holds its short name, live.menu its longest item, live.text its text
-        (layout_rules.live_text_problem). A box taller than a dial (a pad) has room to spare and isn't checked."""
-        problems = []
-        for entry in self.boxes:
-            box = entry["box"]
-            values = box.get("saved_attribute_attributes", {}).get("valueof")
-            if not (box.get("parameter_enable") and values and box.get("presentation") == 1):
-                continue
-            width, height = box["presentation_rect"][2], box["presentation_rect"][3]
-            if height > layout_rules.DIAL_HEIGHT:
-                continue
-            problem = layout_rules.live_text_problem(box["maxclass"], values["parameter_shortname"],
-                                                     values.get("parameter_enum", []), box.get("text", ""), width)
-            if problem:
-                problems.append(f"{values['parameter_longname']} ({box['maxclass']}) is {problem}")
-        if problems:
-            self.fail("controls too narrow for their text:\n  " + "\n  ".join(problems))
-
     def gen_param_defaults_by_box(self):
         """{gen~ box id: {Param name: default}}: each Param a control sets gets the value the initial values send it
         (the sound before Live recalls the controls; `tell` rounded it through generated_number). Fails, listing every problem: a message to no Param, two
@@ -1041,52 +850,6 @@ class DevicePatchBuilder:
         return genexpr.code_with_param_defaults(self.gen_code_by_box[gen_box_id],
                                                 self.gen_param_defaults_by_box()[gen_box_id])
 
-    def write_gen_param_defaults(self):
-        """Every gen~ box's codebox gets its code as built (gen_code_as_built): the Params' defaults written from the
-        initial values. Always from the code as given, so checking twice writes the same."""
-        defaults_by_box = self.gen_param_defaults_by_box()
-        for gen_box_id, code in self.gen_code_by_box.items():
-            codebox = self.find(gen_box_id)["patcher"]["boxes"][0]["box"]
-            if codebox["id"] != "cb":
-                self.fail(f"internal error: gen~ box {gen_box_id!r}'s first box is not its codebox")
-            codebox["code"] = genexpr.code_with_param_defaults(code, defaults_by_box[gen_box_id]).strip() + "\n"
-
-    def ui_lookups(self):
-        """Every scripting name the UI script looks up."""
-        saved_varnames = set()
-        for control in self.saved_controls.values():
-            saved_varnames |= (set(control.parameter_varnames()) if isinstance(control, SavedRecord)
-                               else {control.varname})
-        return (saved_varnames
-                | {n for names in self.controls_by_kind.values() for n in names} | set(self.view_varnames)
-                | {n for names in self.pages.values() for n in names} | set(self.stop_turns_off)
-                | set(self.neutral_by_varname) | {varname_for(FRESH_START_FLAG_NAME)})
-
-    def check_script_lookups(self):
-        """Every name the UI script looks up must name exactly one box (it errors at run time otherwise)."""
-        box_varnames = [x["box"]["varname"] for x in self.boxes if "varname" in x["box"]]
-        missing = self.ui_lookups() - set(box_varnames)
-        if missing:
-            self.fail(f"the UI script looks up names no box has: {sorted(missing)}")
-        if len(box_varnames) != len(set(box_varnames)):
-            self.fail(f"varnames used twice: {sorted({n for n in box_varnames if box_varnames.count(n) > 1})}")
-
-    def check_wires(self):
-        """Every wire leaves an outlet its box has and enters an inlet its box has."""
-        boxes_by_id = {x["box"]["id"]: x["box"] for x in self.boxes}
-        bad_wires = []
-        for line in self.lines:
-            (source, outlet_index), (destination, inlet_index) = (line["patchline"]["source"],
-                                                                  line["patchline"]["destination"])
-            if outlet_index >= boxes_by_id[source]["numoutlets"]:
-                bad_wires.append(f"{boxes_by_id[source].get('text', boxes_by_id[source]['maxclass'])} has no outlet "
-                                 f"{outlet_index}")
-            if inlet_index >= boxes_by_id[destination]["numinlets"]:
-                bad_wires.append(f"{boxes_by_id[destination].get('text', boxes_by_id[destination]['maxclass'])} has "
-                                 f"no inlet {inlet_index}")
-        if bad_wires:
-            self.fail("wires to outlets or inlets that don't exist:\n  " + "\n  ".join(bad_wires))
-
     # ---- what the build writes ------------------------------------------------------------------------------
 
     def patch(self):
@@ -1096,61 +859,6 @@ class DevicePatchBuilder:
             "openinpresentation": 1, "devicewidth": float(self.device_width),
             "boxes": self.boxes, "lines": self.lines, "latency": self.latency_samples,
         }}
-
-    def ui_script(self, presets):
-        """The UI script (templates/ui-script.template.js): pages, groups, the Preset menu, Stop, the theme, and a fresh
-        device's move to its start values."""
-        presets_for_menu = []
-        if self.header_boxes["preset"] is not None:
-            presets_for_menu = [self.preset_menu_values(preset) for preset in presets]
-        return fill_template(kit_template_text("ui-script.template.js"), {
-            "DEVICE_NAME": json.dumps(self.device_name), "SCRIPT_NAME": self.script_name,
-            "PAGE_NAMES": json.dumps(self.page_names), "PAGES": json.dumps(self.pages),
-            "PRESETS": json.dumps(presets_for_menu, indent=1), "CONTROLS": json.dumps(self.controls_by_kind),
-            "GROUPS": json.dumps(self.groups), "VIEWS": json.dumps(self.view_varnames),
-            "STOP_TURNS_OFF": json.dumps(self.stop_turns_off), "THEME_FROM_LIVE": theme_from_live_js(),
-            "FRESH_START": json.dumps(self.fresh_start_by_varname),
-            "NEUTRAL": json.dumps(self.neutral_by_varname),
-            "FRESH_START_FLAG": json.dumps(varname_for(FRESH_START_FLAG_NAME))},
-            "the kit's UI script template")
-
-    def preset_menu_values(self, preset):
-        """{scripting name: value} the Preset menu sets for `preset`: each control's value as held, and each saved
-        record's Stored Only parameters (the UI script sets them; each tells the brain its value, as Live's recall does)."""
-        values = {}
-        for name, value in preset.values.items():
-            if not isinstance(self.saved_controls[name], SavedRecord):
-                values[self.saved_controls[name].varname] = value
-        for long_name, number in stored_only_values_of_preset(preset.values, None, f"preset {preset.name!r}").items():
-            values[varname_for(long_name)] = number
-        return values
-
-    def full_layout(self, layout):
-        """The views script's LAYOUT from the device's `layout` ({"pages": [{"rules": [x], "labels": [[text, x,
-        baseline, "label" | "hint"]]}]}, one page per page name): the header's labels added to each page, the
-        subtitle's place (layout_rules.subtitle_x: the kit's, never the device's), its text, the version and the link
-        chip's text."""
-        if len(layout.get("pages", [])) != len(self.page_names):
-            self.fail(f"the layout has {len(layout.get('pages', []))} pages, the device {len(self.page_names)}")
-        if "subtitle" in layout:
-            self.fail("the layout places the subtitle: the kit does (layout_rules.subtitle_x), drop the layout's "
-                      "\"subtitle\"")
-        if self.header_boxes is None:
-            self.fail("the layout is asked for before the header is built (the subtitle goes after its tabs)")
-        return dict(layout, subtitle=self.subtitle_x, subtitle_text=self.subtitle, version=self.version,
-                    link_chip_text=self.link_chip_text,
-                    pages=[dict(page, labels=self.header_labels() + list(page["labels"])) for page in layout["pages"]])
-
-    def views_script(self, layout, device_views_code):
-        """The views script (templates/views.template.js): the chrome and link chip, the drawing helpers, and the
-        device's own displays (`device_views_code`, ES5). layout: {"pages": [{"rules": [x], "labels": [[text, x,
-        baseline, "label" | "hint"]]}]}, one page per page name; the header's labels and the subtitle are added."""
-        layout = self.full_layout(layout)
-        return fill_template(kit_template_text("views.template.js"), {
-            "DEVICE_NAME": json.dumps(self.device_name), "SCRIPT_NAME": self.script_name,
-            "COZETTE": kit_template_text("cozette-glyphs.js").strip(), "THEME_FROM_LIVE": theme_from_live_js(),
-            "VIEW_DEFAULTS": json.dumps(self.view_defaults), "LAYOUT": "var LAYOUT = " + json.dumps(layout) + ";",
-            "DEVICE_VIEWS": device_views_code.strip()}, "the kit's views script template")
 
     def messages_for(self, control_values, destination, beats_per_minute=None):
         """What `destination` gets from these control values ({control: value as held}), as {message: value}; a

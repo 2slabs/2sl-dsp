@@ -1,7 +1,6 @@
-"""Two build checks of what a patch sends: Max time values are real (twosl_dsp/max_time_values.py, in
-DevicePatchBuilder.box), and every message sent straight into a gen~ names a Param it declares: the patch's own
-(check_messages_into_gen_name_params: tell's [prepend], message boxes) and its scripts' (check_script_messages_into_gen,
-reading outlet() calls with twosl_dsp/script_outlet_calls.py). Builds small patches in memory; writes nothing."""
+"""The plugin builds' check of what a patch sends: every message sent straight into a gen~ names a Param it declares:
+the patch's own (check_messages_into_gen_name_params: tell's [prepend], message boxes) and its scripts'
+(check_script_messages_into_gen, reading outlet() calls with twosl_dsp/script_outlet_calls.py). Builds small patches in memory; writes nothing."""
 import os
 import sys
 import unittest
@@ -9,36 +8,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from twosl_dsp.build_error import BuildError  # noqa: E402
-from twosl_dsp.max_time_values import MAX_NOTE_VALUE_TICKS  # noqa: E402
 from twosl_dsp.script_outlet_calls import outlet_calls  # noqa: E402
 from test_patch_builder import builder  # noqa: E402  (its gen~, patch.target, declares a, b and volume)
-
-
-class MaxTimeValueTests(unittest.TestCase):
-    def test_64nt_is_not_a_max_note_value(self):
-        with self.assertRaisesRegex(BuildError, "'64nt' is not a Max note value \\(Time Value Syntax\\)"):
-            builder().box("metro 64nt @quantize 64nt")
-        with self.assertRaisesRegex(BuildError, "'64nt' is not a Max note value"):
-            builder().box("metro 16n @quantize 64nt")
-        with self.assertRaisesRegex(BuildError, "'256n' is not a Max note value"):
-            builder().box("delay 256n")
-
-    def test_real_note_values_and_plain_numbers_pass(self):
-        patch = builder()
-        for text in ("metro 16n", "metro 64n @quantize 64n", "metro 128n", "delay 250", "metro 10.5 @interval 4nd",
-                     "metro @interval 8nt", "pipe 32nd", "line 0 20"):
-            patch.box(text)
-
-    def test_the_table_is_the_reference_s(self):
-        # Time Value Syntax: 480 ticks a quarter note; dotted is 3/2, triplet 2/3
-        for name, ticks in MAX_NOTE_VALUE_TICKS.items():
-            denominator = int(name.split("n")[0])
-            plain = 1920 // denominator
-            self.assertEqual(ticks, {"": plain, "d": plain * 3 // 2, "t": plain * 2 // 3}[name.split("n")[1]], name)
-        self.assertEqual(len(MAX_NOTE_VALUE_TICKS), 21)
-
-    def test_other_objects_are_not_read(self):
-        builder().box("prepend 64nt")
 
 
 def builder_with_script_into_gen():

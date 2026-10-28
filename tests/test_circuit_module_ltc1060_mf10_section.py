@@ -1,17 +1,18 @@
 """The LTC1060 / MF10 section module (twosl_dsp/circuit_modules/ltc1060_mf10_section.py): its claims, rendered through
 our GenExpr renderer (ours, not Max's compiler), each on a small harness (tests/gen_block_harness.py) at the lowest
 length that still tests it. The claims are stated in fractions of the chip's full scale: the harness feeds the section
-volts (in1 x full scale) and reads its output back in full scale. Standard library only."""
+volts (in1 x full scale) and reads its output back in full scale. Standard library only, and node for the response script."""
 import cmath
 import json
 import math
 import os
+import shutil
+import subprocess
 import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from twosl_dsp import es5  # noqa: E402
 from twosl_dsp.build_error import BuildError  # noqa: E402
 from twosl_dsp.circuit_modules.ltc1060_mf10_section import (MAXIMUM_TICKS_PER_SAMPLE,  # noqa: E402
                                                           Q_ENHANCEMENT_FITS, Ltc1060Mf10Character,
@@ -21,6 +22,7 @@ from gen_block_harness import (amplitude_at, cents, complex_amplitude_at,  # noq
                                frequency_by_zero_crossings, harness)
 
 SAMPLERATE = 44100.0
+NODE = os.environ.get("NODE") or shutil.which("node")
 FULL_SCALE_VOLTS = Ltc1060Mf10Character().full_scale_volts
 FEEDTHROUGH_AMPLITUDE = Ltc1060Mf10Character().clock_feedthrough_of_full_scale
 OUTPUT_MIX = {"lowpass": ("1", "0", "0"), "bandpass": ("0", "1", "0"), "highpass": ("0", "0", "1")}
@@ -107,15 +109,20 @@ class Ltc1060Mf10SectionTests(unittest.TestCase):
                 self.assertAlmostEqual(measured, expected, delta=0.3, msg=f"{output} at {frequency} Hz")
 
     def test_the_display_script_is_the_same_response(self):
-        script = response_script_code()
-        for frequency, cutoff, damping, ratio in ((100.0, 700.0, 0.3, 100), (700.0, 700.0, 0.05, 100),
-                                                  (15000.0, 20000.0, 1.5, 50)):
+        # run in node, as 2sl filter's graph runs it (its plugin/generate.py writes it into filter_response.js)
+        if NODE is None:
+            self.fail("node isn't on PATH (set NODE=/path/to/node): the response script's test needs it")
+        cases = ((100.0, 700.0, 0.3, 100), (700.0, 700.0, 0.05, 100), (15000.0, 20000.0, 1.5, 50))
+        calls = ", ".join(f"ltc1060Mf10SectionResponse({frequency!r}, {ratio * cutoff!r}, {damping!r}, {ratio!r})"
+                          for frequency, cutoff, damping, ratio in cases)
+        run = subprocess.run([NODE, "-e", response_script_code() + f"\nconsole.log(JSON.stringify([{calls}]));"],
+                             capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        for (frequency, cutoff, damping, ratio), got in zip(cases, json.loads(run.stdout)):
             pins = small_signal_response(frequency, ratio * cutoff, damping, ratio)
             for pin, value in zip(("lp", "bp", "hp"), pins):
                 for part, expected in (("Re", value.real), ("Im", value.imag)):
-                    got = float(es5.evaluate(script + f"\nltc1060Mf10SectionResponse({frequency}, {ratio * cutoff}, {damping}, "
-                                                      f"{ratio}).{pin}{part}"))
-                    self.assertAlmostEqual(got, expected, places=9, msg=f"{pin}{part} at {frequency} Hz")
+                    self.assertAlmostEqual(got[pin + part], expected, places=9, msg=f"{pin}{part} at {frequency} Hz")
 
     def test_the_whistle_is_the_clock(self):
         # silence in, feedthrough at the datasheets' 10 mV p-p: a square at 100 x the cutoff (6 kHz at 60 Hz), its

@@ -40,9 +40,11 @@ like a [small mixing desk]").
 - **A smoother starts at its target.** A History that follows a control (a glide, a delay ring of it) starts where
   the control starts, through `HistoriesStartAtTheirTargets` on the first sample; never at a constant that repeats
   (or should repeat) the control's Init value (architecture/presets.md: Init is the one source).
-- **Constants** a display also needs come from the block, never a copy: a block with a display gives
-  `response_script_code()` (an ES5 template in `templates/`, filled from the block's constants), and a test holds the
-  script, the Python formula and the rendered block equal.
+- **Constants** a drawing of the response also needs come from the block, never a copy: the LTC1060 / MF10 section
+  gives `response_script_code()` (templates/ltc1060-mf10-section-response.template.js, filled from the module's
+  constants; 2sl filter's graph runs it), and a test holds the script, the Python formula and the rendered block
+  equal. Other blocks give the Python formula only (`small_signal_magnitude`, `phasor_notches_hz`, `pump_duck`), held
+  to the rendered block.
 - **Only what Max accepts.** The kit renderer (`twosl_dsp/genexpr.py`) is our subset, not Max: every construct a block
   uses has a source or a real GenExpr precedent in references/dsp.md ("gen~").
 - **Cites its sources**: the class's `references_entry` is a references/ file with a `## ` heading naming the block's

@@ -1,34 +1,30 @@
-# The device repository contract
+# A plugin repository and the kit
 
-Every 2sl Max for Live device has its own repository, with the kit as a git submodule:
+Each 2sl plugin (2sl filter, 2sl dub, 2sl stab) has its own repository, with this kit as a git submodule:
 
 ```
-<device repo>/
-  build.py                     the entry point: python3 build.py [--accept-live-parameter-changes]
+<plugin repo>/
   2sl-dsp/                     this kit (git submodule add https://github.com/2slabs/2sl-dsp.git 2sl-dsp)
-  src/                         hand-written sources only: the device's Python, its script templates, its preset
-                               book, and live-parameters.lock.json (written by the build, reviewed by hand)
-  devices/<script name>/       the development build, written by the build and committed: <name>.maxpat,
-                               <name>.amxd, its scripts, its .adv presets. Add devices/ to Live's browser to use it.
-  dist/                        the release, written by the build, not committed (.gitignore): <name>-<version>/
-                               (the frozen device and its presets) and <name>-<version>.zip
-  tests/  references/  architecture/  README.md  LICENSE  SHORTCUTS.md
+  2sl-plugin/                  the private plugin layer (twosl_plugin/, cpp/)
+  src/                         the device's sources: its Python (<name>_dsp.py: the gen~ code from the kit's blocks;
+                               <name>_device.py: the patch, built in memory), its brain template, its preset book,
+                               and live-parameters.lock.json (written by plugin/generate.py, reviewed by hand)
+  plugin/generate.py           reads the patch and writes plugin/generated/ (the core's C, the parameters, presets)
+  tests/  references/  architecture/  README.md  SHORTCUTS.md
 ```
 
-`build.py` puts `2sl-dsp/` and `src/` on `sys.path`, then `DeviceRepository.of_build_script(__file__)` finds the
-root from the entry point and fails loudly unless `src/` exists, `2sl-dsp/` is an initialised submodule, and the kit
-running is that submodule (not another checkout that happened to be on the path).
+`plugin/generate.py` puts `2sl-dsp/`, `2sl-plugin/` and `src/` on `sys.path` and builds the patch with
+`<name>_device.built_in_memory(DeviceRepository(root))`; `DeviceRepository` refuses a root without `src/` and the
+kit's own folder. Nothing in the kit writes a file of a plugin's build: the plugin layer writes plugin/generated/.
 
 Why:
-- **One kit, many devices, each pinned.** The submodule commit is the kit version a device was built with; a kit
-  change reaches a device only when its repository moves the pointer, and its own tests (the committed build is what
-  the sources build) say whether anything changed.
-- **The kit is never written by a build.** Every path a build writes goes through `DeviceRepository.check_writable`,
-  which refuses the kit's folder and anything outside the repository.
-- **Generated output is committed, so it can be reviewed.** `devices/` is what Live loads in development and what a
-  diff shows; it must be exactly what the sources build (a device's tests check it byte for byte).
-- **src/ is hand-written only.** Nothing the build writes goes in src/ except the parameter lock, which is the
-  reviewed record of what Live knows the parameters by (live-parameter-identity.md).
-- **The tests compare the build exactly and sound as sound.** A device's tests hold devices/ and every generated file
-  to the byte, and compare any two renders (presets before and after, plugin vs device) with the kit's
-  `render_comparison`, never `==` (testing.md); they report "within tolerance: residual X dB".
+- **One kit, many plugins, each pinned.** The submodule commit is the kit version a plugin was built with; a kit
+  change reaches a plugin only when its repository moves the pointer, and its own tests (`generate.py --check`, its
+  renders) say whether anything changed.
+- **src/ is hand-written only**, but for the parameter lock, the reviewed record of what the host knows the
+  parameters by (live-parameter-identity.md).
+- **The tests compare the build exactly and sound as sound.** A plugin's tests hold plugin/generated/ to the byte
+  and compare any two renders with the kit's `render_comparison`, never `==` (testing.md).
+
+The in-memory patch is a stage: phase 2 of 2sl-plugin PLANS/2026-10-28-plugins-without-max.md describes each plugin
+in C++ and ports the DSP, and the patch, the brain templates and this layout go.

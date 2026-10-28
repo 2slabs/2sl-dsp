@@ -1,9 +1,10 @@
-"""A small device built with the kit into a temporary device repository: the tests' fixture.
+"""A small device made with the kit in memory: the tests' fixture, and 2sl-plugin's (its tests/test_plugin_layer.py).
 
 It has one of everything the kit makes (a gen~ with Params, a dial with a display, a toggle, a menu, tabs, a Stored
-Only value, a button, the seeded random's Seed and Loop, the chord block with its display, a stored table with an
-editor of each kind) and ships its two presets as Live preset files, so a build of it exercises every step of
-build_device. `build_fixture_device(root)` builds it into `root` (made if needed) and returns the DeviceRepository.
+Only value, a button, the seeded random's Seed and Loop, the chord block, a stored table with an editor of each kind)
+and two presets. `fixture_patch(book)` makes its patch (and its brain, `patch.fixture_brain`);
+`build_fixture_device(root)` makes a device repository in `root` (made if needed) with its preset book and its Live
+parameter lock, as a plugin repository has them, and returns the DeviceRepository.
 """
 import json
 import os
@@ -14,11 +15,10 @@ if KIT_DIRECTORY not in sys.path:
     sys.path.insert(0, KIT_DIRECTORY)
 
 from twosl_dsp import layout_rules  # noqa: E402
+from twosl_dsp.live_parameter_identity import LOCK_FILE_NAME, check_lock, device_identity  # noqa: E402
 from twosl_dsp.chord_block import ChordBlock  # noqa: E402
 from twosl_dsp.generated_scripts import fill_template  # noqa: E402
-from twosl_dsp.device_build import build_device  # noqa: E402
 from twosl_dsp.device_repository import DeviceRepository  # noqa: E402
-from twosl_dsp.live_preset_files import LivePresetFiles  # noqa: E402
 from twosl_dsp.patch_builder import DevicePatchBuilder  # noqa: E402
 from twosl_dsp.preset_book import PresetBook  # noqa: E402
 from twosl_dsp.seeded_random import SeededRandom  # noqa: E402
@@ -48,21 +48,6 @@ FIXTURE_INFO = {name: (name, f"{name}: what it does.") for name in
                 ("Link view", "Page", "Volume", "Stop", "Level", "Bright", "Shape", "Mode", "Kick", "Level view",
                  "Chord", "In key", "Chord view", "Stage Pitch edit 1", "Stage Pitch edit 2", "Stage Pulse edit 1",
                  "Stage Wait edit 2")}
-FIXTURE_VIEWS_CODE = fill_template("""
-var DEVICE_STATE = { kicks: 0 };
-var ANIMATED_MODES = [];
-/*CHORD_DISPLAY*/
-function deviceMessage(m, a) {
-  if (chordDisplayMessage(m, a)) return true;
-  if (m === "kick") { S.kicks++; return true; }
-  return false;
-}
-var VIEW_PAINTERS = { level: function (w, h) { rect(4, viewHeading("level", "", w) + 2, (w - 8) * S.level, 4, T.mint); },
-                      chord: function (w, h) { chordDisplayView(w, h, "chord"); } };
-var VIEW_CLICKS = {};
-// the level display is dragged: its height sets the level, told out while held
-var VIEW_DRAGS = { level: function (x, y, held) { if (held) outlet(0, "level", 1 - y / mgraphics.size[1]); } };
-""", {"CHORD_DISPLAY": ChordBlock.display_code()}, "the fixture's views code")
 # the fixture's brain: the kit's seeded random and chord block, a key playing its chord, the rest ignored
 FIXTURE_BRAIN_TEMPLATE = """var DEVICE_NAME = "kit fixture";
 inlets = 2;
@@ -102,7 +87,6 @@ def fixture_patch(preset_book):
                views=[(level_view, "level")])
     bright = patch.toggle("Bright", "Bright", 12, layout_rules.ROW_Y, 60, 15, "one")
     patch.tell(bright, "bright", brain, 1)
-    patch.turned_off_by_stop(bright)
     shape = patch.menu("Shape", "Shape", ["round", "square"], 76, layout_rules.ROW_Y, 56, "one")
     patch.tell(shape, "shape", brain, 1)
     mode = patch.tabs("Mode", "Mode", ["a", "b", "c"], 12, layout_rules.ROW_Y, 96, "two")
@@ -134,10 +118,6 @@ def fixture_patch(preset_book):
     return patch
 
 
-# the chrome's rules and labels per page (the kit places the subtitle: layout_rules.subtitle_x)
-FIXTURE_LAYOUT = {"pages": [{"rules": [140], "labels": []}, {"rules": [], "labels": []}]}
-
-
 def stored_memory_of_preset(preset_values):
     return {"Memory": 7 + preset_values["Level"]}
 
@@ -149,15 +129,11 @@ def make_fixture_repository(root, preset_book_data=None):
     return DeviceRepository(root)
 
 
-def build_fixture_device(root, command_line_arguments=("--accept-live-parameter-changes",), patch_edit=None,
-                         live_preset_files=True, views_code=FIXTURE_VIEWS_CODE):
-    """Build the fixture into `root`. patch_edit(patch): a change made before the build (a test's breakage)."""
+def build_fixture_device(root):
+    """The fixture's repository in `root`: src/presets.json and src/live-parameters.lock.json written from its patch."""
     repository = make_fixture_repository(root) if not os.path.isdir(os.path.join(root, "src")) else DeviceRepository(root)
     preset_book = PresetBook.from_file(repository.source_path("presets.json"), "src/presets.json")
     patch = fixture_patch(preset_book)
-    if patch_edit is not None:
-        patch_edit(patch)
-    build_device(repository, patch, FIXTURE_LAYOUT, views_code, {f"{FIXTURE_SCRIPT_NAME}.js": patch.fixture_brain},
-                 live_preset_files=LivePresetFiles(stored_memory_of_preset) if live_preset_files else None,
-                 command_line_arguments=command_line_arguments)
+    check_lock(repository.source_path(LOCK_FILE_NAME), device_identity(patch.patch(), patch.device_type), True,
+               f"src/{LOCK_FILE_NAME}")
     return repository

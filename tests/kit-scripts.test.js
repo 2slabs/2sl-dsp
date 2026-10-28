@@ -1,7 +1,6 @@
-// The kit's generated scripts, run in node with Max's globals stubbed (tools/max_sandbox.js), on a device built from
-// the kit's templates: node tests/kit-scripts.test.js <device folder> (tests/test_kit_scripts.py builds the fixture
-// device and runs this on it). The UI script: pages, Stop, the theme, loud failures. The views script: every display
-// paints without an error, takes its messages, refuses others.
+// The kit's brain blocks (the seeded random, the chord block, the stored table), run in node with Max's [js] globals
+// stubbed (tools/max_sandbox.js), in the fixture's brain as the kit generates it: node tests/kit-scripts.test.js
+// <brain.js> <patch.json> (tests/test_kit_scripts.py makes both from tests/fixture_device.py, in memory).
 "use strict";
 const vm = require("vm");
 const fs = require("fs");
@@ -9,31 +8,19 @@ const path = require("path");
 const assert = require("assert");
 const { sandbox, deliverMessage } = require(path.join(__dirname, "..", "tools", "max_sandbox.js"));
 
-const DEVICE_FOLDER = process.argv[2];
-if (!DEVICE_FOLDER) throw new Error("usage: node tests/kit-scripts.test.js <device folder>");
-const SCRIPT_NAME = path.basename(DEVICE_FOLDER);
-const UI_SOURCE = fs.readFileSync(path.join(DEVICE_FOLDER, SCRIPT_NAME + "-ui.js"), "utf8");
-const VIEWS_SOURCE = fs.readFileSync(path.join(DEVICE_FOLDER, SCRIPT_NAME + "-view.js"), "utf8");
-const BRAIN_SOURCE = fs.readFileSync(path.join(DEVICE_FOLDER, SCRIPT_NAME + ".js"), "utf8");
-const PATCH = JSON.parse(fs.readFileSync(path.join(DEVICE_FOLDER, SCRIPT_NAME + ".maxpat"), "utf8"));
-const VIEW_MODES = PATCH.patcher.boxes.map((b) => b.box).filter((b) => b.maxclass === "jsui").map((b) => b.jsarguments[0]);
+const [BRAIN_FILE, PATCH_FILE] = process.argv.slice(2);
+if (!BRAIN_FILE || !PATCH_FILE) throw new Error("usage: node tests/kit-scripts.test.js <brain.js> <patch.json>");
+const BRAIN_SOURCE = fs.readFileSync(BRAIN_FILE, "utf8");
+const PATCH = JSON.parse(fs.readFileSync(PATCH_FILE, "utf8"));
 
 const tests = [];
 function test(name, body) { tests.push({ name, body }); }
 
-/** Max's globals for [js] and [jsui]: patch objects by scripting name (recording the messages they get), mgraphics
- *  (recording nothing), Task, max.getcolor (Live's dark theme). */
-function maxGlobals(record, mode) {
+/** Max's [js] globals a brain reaches: patch objects by scripting name (recording the messages they get), Task. */
+function maxGlobals(record) {
   record.messagesTo = {};
-  const graphics = {};
-  for (const method of ["init", "set_source_rgba", "rectangle", "fill", "fill_preserve", "stroke", "set_line_width",
-                        "move_to", "line_to", "curve_to", "close_path", "redraw"]) graphics[method] = () => {};
-  graphics.size = [200, 64];
   return {
-    jsarguments: [SCRIPT_NAME + "-view.js", mode],
-    mgraphics: graphics,
     Task: function (callback) { this.callback = callback; this.repeat = () => {}; this.cancel = () => {}; },
-    max: { getcolor: () => [0.149, 0.149, 0.149, 1], launchbrowser: (url) => record.posts.push("launch " + url) },
     // a control keeps the number it was last sent (as Live's parameter does) and getvalueof() reads it; every
     // control starts where Live loads it: its initial value (LIVE_INITIAL), or record.values set by a test first
     patcher: { getnamed: (name) => ({
@@ -47,143 +34,21 @@ function maxGlobals(record, mode) {
   };
 }
 
-/** {varname: Live's initial value} of every parameter in the patch: what a fresh device loads at. */
+/** {varname: Live's initial value} of every parameter in the patch: what a fresh instance loads at. */
 const LIVE_INITIAL = {};
 for (const box of PATCH.patcher.boxes.map((b) => b.box)) {
   const valueof = box.saved_attribute_attributes && box.saved_attribute_attributes.valueof;
   if (box.varname && valueof && valueof.parameter_initial) LIVE_INITIAL[box.varname] = valueof.parameter_initial[0];
 }
 
-function load(source, mode, values) {
+function load(source, values) {
   const record = { values: Object.assign({}, values || {}) };
   const made = sandbox(1, {});
   Object.assign(made.record, record);
-  Object.assign(made.context, maxGlobals(made.record, mode));
+  Object.assign(made.context, maxGlobals(made.record));
   vm.runInContext(source, made.context);
   return made;
 }
-
-test("the UI script shows the first page on ready, and another on page", () => {
-  const { context, record } = load(UI_SOURCE);
-  deliverMessage(context, 0, "ready", []);
-  const shown = (name) => {
-    const last = record.outlets.filter((o) => o[2] === "sendbox" && o[3] === name).pop();
-    return last && last[5] === 0;
-  };
-  assert.deepStrictEqual(record.errors, []);
-  assert.ok(shown("level") && !shown("mode"), "page one shows, page two doesn't");
-  deliverMessage(context, 0, "page", [1]);
-  assert.ok(!shown("level") && shown("mode"), "page two shows");
-  deliverMessage(context, 0, "page", [7]);
-  assert.ok(record.errors.some((e) => /page 7 doesn't exist/.test(e)), "a page that doesn't exist is an error");
-});
-
-// ---- a fresh device moves to its start values once; a saved set or preset is never touched -----------------
-
-const FRESH_START = JSON.parse(UI_SOURCE.match(/^var FRESH_START = (\{.*?\});/m)[1]);
-const NEUTRAL = JSON.parse(UI_SOURCE.match(/^var NEUTRAL = (\{.*?\});/m)[1]);
-const controlMessages = (record) => Object.keys(record.messagesTo).filter((n) => n !== "init_applied" &&
-  record.messagesTo[n].some((m) => m.length === 1 && typeof m[0] === "number"));
-
-test("a fresh device (flag 0, every control at its neutral value) moves to the Init sound on ready, once", () => {
-  const { context, record } = load(UI_SOURCE);
-  for (const name in NEUTRAL) assert.strictEqual(LIVE_INITIAL[name], NEUTRAL[name][0], name + ": Live loads its neutral");
-  deliverMessage(context, 0, "ready", []);
-  assert.deepStrictEqual(record.errors, []);
-  // the fixture's Init values that aren't neutral (tests/fixture_device.py): Level 50, In key on, Chord minor (index
-  // 2 after "one note", "held notes"; its neutral is "held notes", 1), Loop 16 bars (index 5)
-  assert.strictEqual(NEUTRAL.chord[0], 1);
-  assert.deepStrictEqual({ level: record.values.level, in_key: record.values.in_key, chord: record.values.chord,
-                           loop: record.values.loop }, { level: 50, in_key: 1, chord: 2, loop: 5 });
-  assert.deepStrictEqual(controlMessages(record).sort(), Object.keys(FRESH_START).sort(),
-                         "only the controls whose start isn't neutral are set");
-  assert.strictEqual(record.values.init_applied, 1, "the flag is set");
-  record.messagesTo = {};
-  deliverMessage(context, 0, "ready", []);       // live.thisdevice bangs again on a preset load or a save
-  assert.deepStrictEqual(controlMessages(record), [], "a second ready sets nothing");
-});
-
-test("a saved set or a preset (flag 1) keeps its values: nothing is set on ready", () => {
-  const { context, record } = load(UI_SOURCE, undefined, { init_applied: 1, level: 0, chord: 0 });
-  deliverMessage(context, 0, "ready", []);
-  assert.deepStrictEqual(controlMessages(record), []);
-  assert.deepStrictEqual(record.messagesTo.init_applied, undefined, "the flag is left alone");
-  assert.deepStrictEqual(record.errors, []);
-});
-
-test("a set saved before the flag (flag 0, a control away from neutral) keeps its values and says so", () => {
-  const { context, record } = load(UI_SOURCE, undefined, { level: 70 });
-  deliverMessage(context, 0, "ready", []);
-  assert.deepStrictEqual(controlMessages(record), [], "nothing moved to Init");
-  assert.strictEqual(record.values.level, 70);
-  assert.strictEqual(record.values.init_applied, 1, "the flag is set, so it isn't asked again");
-  assert.ok(record.posts.some((p) => /saved before the fresh-start flag/.test(p) && /level/.test(p)), record.posts);
-});
-
-test("a flag that reads neither 0 nor 1 leaves the controls alone, loudly", () => {
-  const { context, record } = load(UI_SOURCE, undefined, { init_applied: 7 });
-  deliverMessage(context, 0, "ready", []);
-  assert.deepStrictEqual(controlMessages(record), []);
-  assert.ok(record.errors.some((e) => /fresh-start flag reads 7/.test(e)), record.errors);
-});
-
-test("Stop sets every control it turns off to 0", () => {
-  const { context, record } = load(UI_SOURCE);
-  deliverMessage(context, 0, "stop", []);
-  assert.deepStrictEqual(record.messagesTo.bright, [[0]]);
-  assert.deepStrictEqual(record.errors, []);
-});
-
-test("the theme recolours every control and redraws every display", () => {
-  const { context, record } = load(UI_SOURCE);
-  deliverMessage(context, 0, "theme", []);
-  for (const name of ["level", "bright", "shape", "mode", "page", "volume", "stop"]) {
-    assert.ok(record.messagesTo[name] && record.messagesTo[name].length > 3, name + " is recoloured");
-  }
-  for (const mode of VIEW_MODES) assert.deepStrictEqual(record.messagesTo["view_" + mode], [["theme"]]);
-  assert.deepStrictEqual(record.errors, []);
-});
-
-test("the UI script refuses messages it doesn't know", () => {
-  const { context, record } = load(UI_SOURCE);
-  deliverMessage(context, 0, "nonsense", [1]);
-  assert.ok(record.errors.some((e) => /doesn't know the message 'nonsense'/.test(e)));
-});
-
-test("every display paints without an error, on every page", () => {
-  for (const mode of VIEW_MODES) {
-    const { context, record } = load(VIEWS_SOURCE, mode);
-    for (const page of [0, 1]) {
-      deliverMessage(context, 0, "page", [page]);
-      context.paint();
-    }
-    assert.deepStrictEqual(record.errors, [], mode + " painted with errors");
-  }
-});
-
-test("a drag reaches the device's VIEW_DRAGS while held, and only a display that has one", () => {
-  const level = load(VIEWS_SOURCE, "level");
-  level.context.ondrag(10, 16, 1, 0, 0, 0, 0, 0);
-  level.context.ondrag(10, 32, 0, 0, 0, 0, 0, 0);
-  assert.deepStrictEqual(level.record.outlets, [[0, "level", 1 - 16 / level.context.mgraphics.size[1]]],
-                         "the release (button 0) is told as not held");
-  const chord = load(VIEWS_SOURCE, "chord");
-  chord.context.ondrag(10, 16, 1, 0, 0, 0, 0, 0);
-  assert.deepStrictEqual(chord.record.outlets, []);
-  assert.deepStrictEqual(level.record.errors.concat(chord.record.errors), []);
-});
-
-test("a display keeps a control's value, takes the device's messages and refuses the rest", () => {
-  const { context, record } = load(VIEWS_SOURCE, "level");
-  assert.strictEqual(vm.runInContext("S.level", context), 0.5, "the Init value, from the build");
-  deliverMessage(context, 0, "level", [0.9]);
-  deliverMessage(context, 0, "kick", []);
-  assert.strictEqual(vm.runInContext("S.level", context), 0.9);
-  assert.strictEqual(vm.runInContext("S.kicks", context), 1);
-  deliverMessage(context, 0, "nonsense", [1]);
-  context.msg_int(3);
-  assert.strictEqual(record.errors.length, 2, record.errors.join(" / "));
-});
 
 // ---- the seeded random (templates/seeded-random.template.js) --------------------------------------------------------
 
@@ -304,7 +169,7 @@ test("with Live stopped the sequence keeps stepping: no restart", () => {
   assert.deepStrictEqual(stopped, draws(load(BRAIN_SOURCE).context, 40));
 });
 
-// ---- the chord block (templates/chord-block.template.js, chord-display.template.js) ---------------------------------
+// ---- the chord block (templates/chord-block.template.js) ------------------------------------------------------------
 
 function chordsShown(record) { return record.outlets.filter((o) => o[0] === 1 && o[1] === "chord"); }
 
@@ -383,19 +248,6 @@ test("Drift's voicings come from the seeded random: the same Seed varies the sam
   assert.deepStrictEqual(voicings(3), voicings(3));
   assert.notDeepStrictEqual(voicings(3), voicings(4));
   assert.ok(new Set(voicings(3)).size > 1, "Drift 50% varies some of them");
-});
-
-test("the chord display draws a chord and a notice, and is loud about a bad chord", () => {
-  const { context, record } = load(VIEWS_SOURCE, "chord");
-  deliverMessage(context, 0, "chord", ["Am7", 57, 60, 64, 67]);
-  context.paint();
-  deliverMessage(context, 0, "notice", ["scale", "<5", "notes:", "fixed", "shapes"]);
-  context.paint();
-  deliverMessage(context, 0, "chord", []);
-  context.paint();
-  assert.deepStrictEqual(record.errors, []);
-  deliverMessage(context, 0, "chord", ["Am", 57, 600]);
-  assert.ok(record.errors.some((e) => /not all MIDI pitches/.test(e)));
 });
 
 // ---- the stored table (the fixture's Stage: 2 rows of Pitch -24..24, Pulse off / on, Wait go / stop / hold / keyed)

@@ -48,9 +48,8 @@ square); `depth_a`, `depth_b`, `feedback_a`, `feedback_b` (pot rotations 0..1); 
 Outputs: `<name>_out_a`, `<name>_out_b` (volts, Outputs A and B), `<name>_corner_a_hz`, `<name>_corner_b_hz` (each
 phasor's nominal stage corner now), `<name>_sweep_a`, `<name>_sweep_b` (each phasor's sweep, 0..1, after Rev),
 `<name>_pot_a`, `<name>_pot_b` (each feedback pot's wiper position now, after the taper) and
-`<name>_stage_corner_spread` (the stages' spread now). The corner, the wiper and the spread are all a display needs of
-the running unit: `response_script_code()` gives the ES5 `<name>_phasor_response` and `<name>_phasor_notches_hz`
-(templates/twin-phaser-response.template.js), the Python `phasor_response` and `phasor_notches_hz` step for step.
+`<name>_stage_corner_spread` (the stages' spread now). The corner, the wiper and the spread are all a drawing of the
+response needs of the running unit: the Python `phasor_response` and `phasor_notches_hz` take them.
 """
 import dataclasses
 import math
@@ -222,7 +221,7 @@ def phasor_response(frequency_hz, corner_hz, pot_position, stage_corner_spread, 
     return 1 + alpha * one_pole_response(frequency_hz, mix_corner, sample_rate)["highpass"] * (wet - 1)
 
 
-# The notch search (phasor_notches_hz and the display script's, the same steps): each of the STAGES / 2 notches is
+# The notch search (phasor_notches_hz): each of the STAGES / 2 notches is
 # looked for between two of the equal-stage peaks (2N atan(f / fc) a multiple of 2 pi: tan(m pi / N) x the corner),
 # the outer two brackets reaching NOTCH_SEARCH_REACH past the outer notches' nominal places; a log grid of
 # NOTCH_SEARCH_GRID points, then golden sections on the grid step either side of the least point
@@ -245,8 +244,7 @@ def notch_search_brackets(corner_hz, sample_rate):
 
 def phasor_notches_hz(corner_hz, pot_position, stage_corner_spread, sample_rate, phasor="a",
                       character=TwinPhaserCharacter()):
-    """The phasor's notches now (Hz, low to high): the least |phasor_response| in each notch_search_brackets bracket.
-    The display script's `<name>_phasor_notches_hz` takes the same steps (response_script_code)."""
+    """The phasor's notches now (Hz, low to high): the least |phasor_response| in each notch_search_brackets bracket."""
     def level(log_hz):
         response = phasor_response(math.exp(log_hz), corner_hz, pot_position, stage_corner_spread, sample_rate, phasor,
                                    character)
@@ -418,34 +416,3 @@ ${p}_dry_a = ${input_a_volts};""", pedal_full_scale=PEDAL_FULL_SCALE_VOLTS),
 ${p}_dry_b = ${phasor_b_input} > 1.5 ? ${input_b_volts} : (${phasor_b_input} > 0.5 ? ${p}_out_a : ${input_a_volts});"""),
             self._phasor_statements("b"),
         ])
-
-    def response_script_code(self):
-        """ES5 for a display: `<name>_phasor_response(frequencyHz, cornerHz, potPosition, spread, sampleRate, phasor)`
-        (|phasor_response|, the foot switch on) and `<name>_phasor_notches_hz(cornerHz, potPosition, spread,
-        sampleRate, phasor)` (phasor_notches_hz's steps), fed from the module's own outputs (`<name>_corner_<side>_hz`,
-        `<name>_pot_<side>`, `<name>_stage_corner_spread`) and the sample rate; this instance's bypass cell and the
-        drawing's parts filled in (templates/twin-phaser-response.template.js)."""
-        from twosl_dsp.generated_scripts import fill_template, kit_template_text
-        alpha, mix_corner = mix_weight_and_corner_hz(cell_ohms(self.character.bypass_led_current_amps, self.character),
-                                                     self.character)
-        return fill_template(kit_template_text("twin-phaser-response.template.js"), {
-            "NAME": self.instance_name,
-            "STAGE_SPREAD_PATTERN": "{" + ", ".join(f"{side}: [" + ", ".join(repr(float(r)) for r in pattern) + "]"
-                                                    for side, pattern in STAGE_SPREAD_PATTERN.items()) + "}",
-            "STAGES_PER_PHASOR": str(STAGES_PER_PHASOR),
-            "LOWEST_CUTOFF_HZ": repr(LOWEST_CUTOFF_HZ),
-            "HIGHEST_PREWARP_OF_SAMPLE_RATE": repr(HIGHEST_PREWARP_OF_SAMPLE_RATE),
-            "INPUT_STAGE_GAIN_ON_PLUS": repr(INPUT_STAGE_GAIN_ON_PLUS),
-            "FEEDBACK_DIVIDER_TOP_OHMS": repr(FEEDBACK_DIVIDER_TOP_OHMS),
-            "FEEDBACK_DIVIDER_BOTTOM_OHMS": repr(FEEDBACK_DIVIDER_BOTTOM_OHMS),
-            "FEEDBACK_NODE_CAPACITOR_FARADS": repr(FEEDBACK_NODE_CAPACITOR_FARADS),
-            "FEEDBACK_POT_OHMS": repr(FEEDBACK_POT_OHMS),
-            "OUTPUT_COUPLING_FARADS": repr(OUTPUT_COUPLING_FARADS),
-            "WET_INVERTER_INPUT_OHMS": repr(WET_INVERTER_INPUT_OHMS),
-            "MIX_WEIGHT": repr(generated_number(alpha)),
-            "MIX_CORNER_HZ": repr(generated_number(mix_corner)),
-            "NOTCH_SEARCH_REACH": repr(NOTCH_SEARCH_REACH),
-            "NOTCH_SEARCH_GRID": str(NOTCH_SEARCH_GRID),
-            "NOTCH_SEARCH_SECTIONS": str(NOTCH_SEARCH_SECTIONS),
-            "NOTCH_SEARCH_HIGHEST_OF_SAMPLE_RATE": repr(NOTCH_SEARCH_HIGHEST_OF_SAMPLE_RATE)},
-            "twin-phaser-response.template.js")

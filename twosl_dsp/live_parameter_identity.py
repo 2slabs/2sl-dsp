@@ -3,10 +3,10 @@
 Live stores a parameter's value in sets and presets under its long name, maps a float's stored value through its
 range and exponent, names an enum's values by its items, and lists the automatable parameters in patch order
 (references/README.md, "Live presets"). Change any of that and saved sets, presets, automation and MIDI mappings
-silently land somewhere else. So a device repository keeps `src/live-parameters.lock.json`: every parameter's
-identity, in order, and the device type. The build compares the patch with it and fails with a diff on any change,
-unless it is run with --accept-live-parameter-changes, which rewrites the lock (commit it with the change, and say
-in the release notes what it breaks). architecture/live-parameter-identity.md has the reasoning.
+silently land somewhere else. A plugin repository keeps `src/live-parameters.lock.json`: every parameter's
+identity, in order, and the device type; its plugin build reads the host's parameters from it. plugin/generate.py
+compares the patch with it and fails with a diff on any change, unless it is run with
+--accept-live-parameter-changes, which rewrites the lock (commit it with the change). architecture/live-parameter-identity.md has the reasoning.
 """
 import difflib
 import json

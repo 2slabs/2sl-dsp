@@ -13,8 +13,7 @@ the Init values with some changed. A value is in its control's own units: a dial
 or tab's item name, a toggle's "off" / "on". The build fails on an unknown control, a saved control without an Init
 value, a value out of its control's range, and preset names used twice.
 
-One book serves both preset outputs (architecture/presets.md): Live preset files (.adv, twosl_dsp/live_preset_files.py)
-and the header's Preset menu (the UI script sets every saved control from it).
+A plugin's build makes its factory presets from the book (architecture/presets.md).
 
 A saved record (`SavedRecord`: a stored table, twosl_dsp/stored_table.py) is saved like a control but holds many values:
 its value is an object of fields, each a list of one value per row, in the field's own units. Init gives every field;
